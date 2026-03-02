@@ -128,6 +128,111 @@ func TestBuildsLatestSelectsNewestAcrossPlatformPreReleaseVersions(t *testing.T)
 	}
 }
 
+func TestBuildsLatestSelectsNewestAcrossPlatformPreReleaseVersionsWithTimezoneOffsets(t *testing.T) {
+	setupAuth(t)
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/preReleaseVersions":
+			query := req.URL.Query()
+			if query.Get("filter[app]") != "100000001" {
+				t.Fatalf("expected filter[app]=100000001, got %q", query.Get("filter[app]"))
+			}
+			if query.Get("filter[platform]") != "IOS" {
+				t.Fatalf("expected filter[platform]=IOS, got %q", query.Get("filter[platform]"))
+			}
+			body := `{
+				"data":[
+					{"type":"preReleaseVersions","id":"prv-z-older"},
+					{"type":"preReleaseVersions","id":"prv-offset-newer"}
+				],
+				"links":{"next":""}
+			}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/builds":
+			query := req.URL.Query()
+			if query.Get("filter[app]") != "100000001" {
+				t.Fatalf("expected filter[app]=100000001, got %q", query.Get("filter[app]"))
+			}
+			if query.Get("sort") != "-uploadedDate" {
+				t.Fatalf("expected sort=-uploadedDate, got %q", query.Get("sort"))
+			}
+			if query.Get("limit") != "1" {
+				t.Fatalf("expected limit=1, got %q", query.Get("limit"))
+			}
+
+			switch query.Get("filter[preReleaseVersion]") {
+			case "prv-z-older":
+				// Absolute time: 2026-02-02T07:00:00Z (older by 30 minutes)
+				body := `{
+					"data":[{"type":"builds","id":"build-z-older","attributes":{"uploadedDate":"2026-02-02T07:00:00Z"}}]
+				}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+				}, nil
+			case "prv-offset-newer":
+				// Absolute time: 2026-02-02T07:30:00Z (newer), but lexical string order is lower.
+				body := `{
+					"data":[{"type":"builds","id":"build-offset-newer","attributes":{"uploadedDate":"2026-02-01T23:30:00-08:00"}}]
+				}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+				}, nil
+			default:
+				t.Fatalf("unexpected filter[preReleaseVersion]=%q", query.Get("filter[preReleaseVersion]"))
+				return nil, nil
+			}
+
+		default:
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	root := RootCommand("1.2.3")
+	root.FlagSet.SetOutput(io.Discard)
+
+	stdout, stderr := captureOutput(t, func() {
+		if err := root.Parse([]string{"builds", "latest", "--app", "100000001", "--platform", "ios"}); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := root.Run(context.Background()); err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+	})
+
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+
+	var out struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("unmarshal output: %v\nstdout: %s", err, stdout)
+	}
+	if out.Data.ID != "build-offset-newer" {
+		t.Fatalf("expected latest build id build-offset-newer, got %q", out.Data.ID)
+	}
+}
+
 func TestBuildsLatestReturnsPreReleaseLookupFailure(t *testing.T) {
 	setupAuth(t)
 	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))

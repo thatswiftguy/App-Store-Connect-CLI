@@ -190,7 +190,6 @@ Examples:
 				// Multiple preReleaseVersions (platform filter without version filter)
 				// Query each and find the one with the most recent uploadedDate
 				var newestBuild *asc.Resource[asc.BuildAttributes]
-				var newestDate string
 
 				for _, prvID := range preReleaseVersionIDs {
 					opts := []asc.BuildsOption{
@@ -206,9 +205,10 @@ Examples:
 						return fmt.Errorf("builds latest: failed to fetch: %w", err)
 					}
 					if len(builds.Data) > 0 {
-						if newestBuild == nil || builds.Data[0].Attributes.UploadedDate > newestDate {
-							newestBuild = &builds.Data[0]
-							newestDate = builds.Data[0].Attributes.UploadedDate
+						candidate := builds.Data[0]
+						if newestBuild == nil || isMoreRecentUploadedBuild(candidate, *newestBuild) {
+							selected := candidate
+							newestBuild = &selected
 						}
 					}
 				}
