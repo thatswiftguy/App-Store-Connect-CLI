@@ -199,6 +199,12 @@ func TestAppInfoSetBatchDryRunInlineLocales(t *testing.T) {
 	if intValue(payload["total"]) != 2 {
 		t.Fatalf("expected total=2, got %v", payload["total"])
 	}
+	if intValue(payload["planned"]) != 2 {
+		t.Fatalf("expected planned=2 for dry-run, got %v", payload["planned"])
+	}
+	if intValue(payload["succeeded"]) != 0 {
+		t.Fatalf("expected succeeded=0 for dry-run, got %v", payload["succeeded"])
+	}
 	if intValue(payload["failed"]) != 0 {
 		t.Fatalf("expected failed=0, got %v", payload["failed"])
 	}
