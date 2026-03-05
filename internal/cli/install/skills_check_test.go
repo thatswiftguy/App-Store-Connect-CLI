@@ -260,6 +260,53 @@ func TestDefaultRunSkillsCheckCommand_MissingNpxIsNoop(t *testing.T) {
 	}
 }
 
+func TestDefaultRunSkillsCheckCommand_UsesNonProjectWorkingDirectory(t *testing.T) {
+	origLookup := lookupNpx
+	t.Cleanup(func() {
+		lookupNpx = origLookup
+	})
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+
+	projectDir := t.TempDir()
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error: %v", err)
+	}
+	if err := os.Chdir(projectDir); err != nil {
+		t.Fatalf("Chdir(projectDir) error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(originalWD)
+	})
+
+	mockNpx := filepath.Join(t.TempDir(), "npx-mock.sh")
+	if err := os.WriteFile(mockNpx, []byte("#!/bin/sh\nprintf \"%s\\n\" \"$PWD\"\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+	if err := os.Chmod(mockNpx, 0o755); err != nil {
+		t.Fatalf("Chmod() error: %v", err)
+	}
+
+	lookupNpx = func(file string) (string, error) {
+		return mockNpx, nil
+	}
+
+	output, err := defaultRunSkillsCheckCommand(context.Background())
+	if err != nil {
+		t.Fatalf("defaultRunSkillsCheckCommand() error: %v", err)
+	}
+	workingDir := strings.TrimSpace(output)
+	if workingDir != homeDir {
+		t.Fatalf("expected command working directory %q, got %q", homeDir, workingDir)
+	}
+	if workingDir == projectDir {
+		t.Fatalf("expected command not to run in project directory %q", projectDir)
+	}
+}
+
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 

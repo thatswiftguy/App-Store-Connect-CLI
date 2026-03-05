@@ -132,6 +132,8 @@ func defaultRunSkillsCheckCommand(ctx context.Context) (string, error) {
 
 	// Avoid implicit package downloads during background checks.
 	cmd := exec.CommandContext(ctx, npxPath, "--no-install", "skills", "check")
+	// Avoid resolving project-local node_modules in the current repository.
+	cmd.Dir = skillsCheckWorkingDirectory()
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
@@ -140,4 +142,12 @@ func defaultRunSkillsCheckCommand(ctx context.Context) (string, error) {
 		return combined.String(), err
 	}
 	return combined.String(), nil
+}
+
+func skillsCheckWorkingDirectory() string {
+	homeDir, err := os.UserHomeDir()
+	if err == nil && strings.TrimSpace(homeDir) != "" {
+		return homeDir
+	}
+	return os.TempDir()
 }
