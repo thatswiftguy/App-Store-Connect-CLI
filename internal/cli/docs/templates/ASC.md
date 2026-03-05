@@ -166,6 +166,7 @@ Use `asc <command> --help` for subcommands and flags.
 - `game-center` - Manage Game Center resources.
 - `version` - Print version information and exit.
 - `completion` - Print shell completion scripts.
+- `schema` - Inspect App Store Connect API endpoint schemas at runtime.
 
 ## Global Flags
 
