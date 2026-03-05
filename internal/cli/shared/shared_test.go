@@ -898,7 +898,7 @@ func TestStrictAuthEnabled_EnvFalseyValues(t *testing.T) {
 	}
 }
 
-func TestStrictAuthEnabled_InvalidValueWarnsAndDisables(t *testing.T) {
+func TestStrictAuthEnabled_InvalidValueWarnsAndEnables(t *testing.T) {
 	previousStrict := strictAuth
 	strictAuth = false
 	t.Cleanup(func() {
@@ -907,8 +907,8 @@ func TestStrictAuthEnabled_InvalidValueWarnsAndDisables(t *testing.T) {
 	t.Setenv(strictAuthEnvVar, "maybe")
 
 	stdout, stderr := captureOutput(t, func() {
-		if strictAuthEnabled() {
-			t.Fatal("expected strict auth to be disabled for invalid value")
+		if !strictAuthEnabled() {
+			t.Fatal("expected strict auth to be enabled for invalid value")
 		}
 	})
 
@@ -960,12 +960,14 @@ func TestGetASCClient_ProfileMissingSkipsEnvFallback(t *testing.T) {
 	}
 }
 
-func TestGetASCClient_BypassKeychainPrefersEnvOverConfig(t *testing.T) {
+func TestResolveCredentials_BypassKeychainPrefersConfigOverEnv(t *testing.T) {
 	resetPrivateKeyTemp(t)
 
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.json")
+	configKeyPath := filepath.Join(tempDir, "AuthKey-Config.p8")
 	envKeyPath := filepath.Join(tempDir, "AuthKey-Env.p8")
+	writeECDSAPEM(t, configKeyPath)
 	writeECDSAPEM(t, envKeyPath)
 
 	cfg := &config.Config{
@@ -975,7 +977,7 @@ func TestGetASCClient_BypassKeychainPrefersEnvOverConfig(t *testing.T) {
 				Name:           "config",
 				KeyID:          "CFGKEY",
 				IssuerID:       "CFGISS",
-				PrivateKeyPath: filepath.Join(tempDir, "missing.p8"),
+				PrivateKeyPath: configKeyPath,
 			},
 		},
 	}
@@ -996,8 +998,43 @@ func TestGetASCClient_BypassKeychainPrefersEnvOverConfig(t *testing.T) {
 		selectedProfile = previousProfile
 	})
 
-	if _, err := getASCClient(); err != nil {
-		t.Fatalf("expected env credentials to override config, got %v", err)
+	creds, err := resolveCredentials()
+	if err != nil {
+		t.Fatalf("resolveCredentials() error: %v", err)
+	}
+	if creds.keyID != "CFGKEY" || creds.issuerID != "CFGISS" || creds.keyPath != configKeyPath {
+		t.Fatalf("expected config credentials to win, got %+v", creds)
+	}
+}
+
+func TestResolveCredentials_BypassKeychainFallsBackToEnvWhenConfigMissing(t *testing.T) {
+	resetPrivateKeyTemp(t)
+
+	tempDir := t.TempDir()
+	envKeyPath := filepath.Join(tempDir, "AuthKey-Env.p8")
+	writeECDSAPEM(t, envKeyPath)
+
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(tempDir, "missing.json"))
+	t.Setenv("ASC_BYPASS_KEYCHAIN", "1")
+	t.Setenv("ASC_PROFILE", "")
+	t.Setenv("ASC_KEY_ID", "ENVKEY")
+	t.Setenv("ASC_ISSUER_ID", "ENVISS")
+	t.Setenv("ASC_PRIVATE_KEY_PATH", envKeyPath)
+	t.Setenv("ASC_PRIVATE_KEY_B64", "")
+	t.Setenv("ASC_PRIVATE_KEY", "")
+
+	previousProfile := selectedProfile
+	selectedProfile = ""
+	t.Cleanup(func() {
+		selectedProfile = previousProfile
+	})
+
+	creds, err := resolveCredentials()
+	if err != nil {
+		t.Fatalf("resolveCredentials() error: %v", err)
+	}
+	if creds.keyID != "ENVKEY" || creds.issuerID != "ENVISS" || creds.keyPath != envKeyPath {
+		t.Fatalf("expected env fallback, got %+v", creds)
 	}
 }
 
@@ -1121,7 +1158,7 @@ func TestResolveCredentials_KeychainAccessDeniedStopsFallback(t *testing.T) {
 	}
 }
 
-func TestResolveCredentials_KeychainGenericErrorStillAllowsEnvFallback(t *testing.T) {
+func TestResolveCredentials_KeychainGenericErrorStopsEnvFallback(t *testing.T) {
 	tempDir := t.TempDir()
 	keyPath := filepath.Join(tempDir, "AuthKey.p8")
 	writeECDSAPEM(t, keyPath)
@@ -1149,12 +1186,12 @@ func TestResolveCredentials_KeychainGenericErrorStillAllowsEnvFallback(t *testin
 	}
 	t.Cleanup(func() { getCredentialsWithSourceFn = previous })
 
-	creds, err := resolveCredentials()
-	if err != nil {
-		t.Fatalf("expected env fallback, got %v", err)
+	_, err := resolveCredentials()
+	if err == nil {
+		t.Fatal("expected generic stored-credential error, got nil")
 	}
-	if creds.keyID != "ENVKEY" || creds.issuerID != "ENVISS" || creds.keyPath != keyPath {
-		t.Fatalf("unexpected resolved credentials: %+v", creds)
+	if !strings.Contains(err.Error(), "some other keychain error") {
+		t.Fatalf("expected generic stored-credential error, got %v", err)
 	}
 }
 

@@ -96,13 +96,16 @@ func shouldBypassKeychain() bool {
 		return false
 	}
 	trimmed := strings.ToLower(strings.TrimSpace(value))
+	if trimmed == "" {
+		return false
+	}
 	switch trimmed {
 	case "1", "true", "yes", "on":
 		return true
 	case "0", "false", "no", "off":
 		return false
 	default:
-		return false
+		return true
 	}
 }
 

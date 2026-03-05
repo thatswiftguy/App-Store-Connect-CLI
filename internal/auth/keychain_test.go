@@ -46,7 +46,7 @@ func TestShouldBypassKeychainEnvSemantics(t *testing.T) {
 		{name: "falsey false", value: ptrTo("false"), expect: false},
 		{name: "falsey no", value: ptrTo("no"), expect: false},
 		{name: "falsey off", value: ptrTo("off"), expect: false},
-		{name: "invalid value", value: ptrTo("banana"), expect: false},
+		{name: "invalid value", value: ptrTo("banana"), expect: true},
 	}
 
 	for _, tt := range tests {

@@ -140,7 +140,7 @@ Examples:
 func AuthDoctorCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("auth doctor", flag.ExitOnError)
 
-	output := shared.BindOutputFlagsWith(fs, "output", "text", "Output format: text (default), json")
+	output := shared.BindOutputFlagsWithAllowed(fs, "output", "text", "Output format: text (default), json", "text", "json")
 	fix := fs.Bool("fix", false, "Attempt to fix issues where possible")
 	confirm := fs.Bool("confirm", false, "Confirm applying fixes")
 
@@ -621,7 +621,7 @@ Examples:
 // AuthStatus command factory
 func AuthStatusCommand() *ffcli.Command {
 	fs := flag.NewFlagSet("auth status", flag.ExitOnError)
-	output := shared.BindOutputFlagsWith(fs, "output", defaultAuthStatusOutputFormat(), "Output format: table, json")
+	output := shared.BindOutputFlagsWithAllowed(fs, "output", defaultAuthStatusOutputFormat(), "Output format: table, json", "table", "json")
 	verbose := fs.Bool("verbose", false, "Show detailed storage information")
 	validate := fs.Bool("validate", false, "Validate stored credentials via network")
 

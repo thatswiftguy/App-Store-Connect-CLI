@@ -103,6 +103,47 @@ func TestConfigSaveLoadRemove(t *testing.T) {
 	}
 }
 
+func TestSaveAtOverwritesExistingFile(t *testing.T) {
+	tempDir := t.TempDir()
+	path := filepath.Join(tempDir, "config.json")
+
+	initial := &Config{KeyID: "OLD_KEY"}
+	if err := SaveAt(path, initial); err != nil {
+		t.Fatalf("SaveAt(initial) error: %v", err)
+	}
+
+	updated := &Config{KeyID: "NEW_KEY"}
+	if err := SaveAt(path, updated); err != nil {
+		t.Fatalf("SaveAt(updated) error: %v", err)
+	}
+
+	loaded, err := LoadAt(path)
+	if err != nil {
+		t.Fatalf("LoadAt() error: %v", err)
+	}
+	if loaded.KeyID != "NEW_KEY" {
+		t.Fatalf("expected updated key id, got %q", loaded.KeyID)
+	}
+}
+
+func TestSaveAtRejectsSymlinkPath(t *testing.T) {
+	tempDir := t.TempDir()
+	target := filepath.Join(tempDir, "target.json")
+	if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("WriteFile(target) error: %v", err)
+	}
+
+	link := filepath.Join(tempDir, "config.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink not supported in this environment: %v", err)
+	}
+
+	err := SaveAt(link, &Config{KeyID: "KEY123"})
+	if err == nil {
+		t.Fatal("expected symlink write to fail, got nil")
+	}
+}
+
 func TestLoadMissingConfig(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("ASC_CONFIG_PATH", filepath.Join(tempDir, "missing.json"))
