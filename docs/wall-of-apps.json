@@ -1,5 +1,12 @@
 [
   {
+    "app": "66-Day Streak: Habit Builder",
+    "link": "https://apps.apple.com/us/app/66-day-streak-habit-builder/id6759220059",
+    "creator": "buraksh",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/5c/ce/67/5cce6782-729c-07af-1e0b-7322b8ffd914/SixtysixStreaksIcon-0-0-1x_U007emarketing-0-9-0-85-220.png/512x512bb.jpg",
+    "platform": ["iOS"]
+  },
+  {
     "app": "Audio Horoscope · Astrologica",
     "link": "https://apps.apple.com/app/id6754387408",
     "creator": "supnim",
@@ -400,6 +407,13 @@
     "link": "https://apps.apple.com/us/app/tv-show-tracker-tv-club/id6497563903",
     "creator": "rursache",
     "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/43/b8/67/43b86702-f67b-c314-f65b-cd60980205b0/Icon-0-1x_U007epad-0-1-85-220-0.png/512x512bb.jpg",
+    "platform": ["iOS"]
+  },
+  {
+    "app": "Thought Ease: End Overthinking",
+    "link": "https://apps.apple.com/us/app/thought-ease-end-overthinking/id6759291269",
+    "creator": "buraksh",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/38/89/82/3889821a-7a9e-d068-89ca-937b482923ed/AppIcon-0-0-1x_U007emarketing-0-7-0-85-220.png/512x512bb.jpg",
     "platform": ["iOS"]
   },
   {
