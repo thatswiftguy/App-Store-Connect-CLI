@@ -91,7 +91,7 @@ func resolvePublishBetaGroupIDsFromList(inputGroups []string, groups *asc.BetaGr
 			default:
 				return nil, fmt.Errorf("%s\n%s",
 					formatPublishAmbiguousGroupError(group, matches, groupInternal),
-					"Use the group ID to disambiguate, or --skip-internal to exclude internal groups.")
+					"Use the group ID to disambiguate.")
 			}
 		}
 

@@ -144,8 +144,11 @@ func TestResolvePublishBetaGroupIDsFromList_AmbiguousName(t *testing.T) {
 	if !strings.Contains(errMsg, "GROUP_B (external)") {
 		t.Fatalf("expected external label for GROUP_B, got %v", err)
 	}
-	if !strings.Contains(errMsg, "--skip-internal") {
-		t.Fatalf("expected --skip-internal hint, got %v", err)
+	if !strings.Contains(errMsg, "Use the group ID to disambiguate.") {
+		t.Fatalf("expected disambiguation hint, got %v", err)
+	}
+	if strings.Contains(errMsg, "--skip-internal") {
+		t.Fatalf("did not expect --skip-internal hint for publish testflight, got %v", err)
 	}
 }
 
