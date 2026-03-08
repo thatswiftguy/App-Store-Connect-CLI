@@ -30,11 +30,18 @@ type iapSetupOutput struct {
 			Amount   string `json:"amount"`
 			Currency string `json:"currency"`
 		} `json:"currentPrice,omitempty"`
+		ScheduledPrice *struct {
+			Amount   string `json:"amount"`
+			Currency string `json:"currency"`
+		} `json:"scheduledPrice,omitempty"`
+		ScheduledStartDate string `json:"scheduledStartDate,omitempty"`
 	} `json:"verification,omitempty"`
+	Error      string `json:"error,omitempty"`
 	FailedStep string `json:"failedStep,omitempty"`
 	Steps      []struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		Name    string `json:"name"`
+		Status  string `json:"status"`
+		Message string `json:"message,omitempty"`
 	} `json:"steps"`
 }
 
@@ -334,6 +341,53 @@ func TestIAPSetupCreateOnlyNoVerifySkipsReadback(t *testing.T) {
 	}
 }
 
+func TestIAPSetupClientInitFailureProducesStructuredError(t *testing.T) {
+	t.Setenv("ASC_BYPASS_KEYCHAIN", "1")
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
+	t.Setenv("ASC_KEY_ID", "")
+	t.Setenv("ASC_ISSUER_ID", "")
+	t.Setenv("ASC_PRIVATE_KEY_PATH", "")
+	t.Setenv("ASC_PRIVATE_KEY", "")
+	t.Setenv("ASC_PRIVATE_KEY_B64", "")
+	t.Setenv("ASC_PROFILE", "")
+
+	root := RootCommand("1.2.3")
+	root.FlagSet.SetOutput(io.Discard)
+
+	var result iapSetupOutput
+	stdout, stderr := captureOutput(t, func() {
+		if err := root.Parse([]string{
+			"iap", "setup",
+			"--app", "app-1",
+			"--type", "NON_CONSUMABLE",
+			"--reference-name", "Pro Lifetime",
+			"--product-id", "lifetime",
+			"--output", "json",
+		}); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := root.Run(context.Background()); err == nil {
+			t.Fatal("expected error, got nil")
+		}
+	})
+
+	if stderr != "" {
+		t.Fatalf("expected empty stderr for reported json error, got %q", stderr)
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("parse setup result: %v\nstdout=%q", err, stdout)
+	}
+	if result.Status != "error" || result.FailedStep != "create_iap" {
+		t.Fatalf("expected create_iap failure result, got %+v", result)
+	}
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("expected top-level error message, got %+v", result)
+	}
+	if len(result.Steps) == 0 || result.Steps[0].Status != "failed" || strings.TrimSpace(result.Steps[0].Message) == "" {
+		t.Fatalf("expected structured failed step message, got %+v", result.Steps)
+	}
+}
+
 func TestIAPSetupCreateLocalizationAndPricingSuccess(t *testing.T) {
 	setupAuth(t)
 	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
@@ -552,5 +606,184 @@ func TestIAPSetupCreateLocalizationAndPricingSuccess(t *testing.T) {
 	}
 	if result.Verification.CurrentPrice == nil || result.Verification.CurrentPrice.Amount != "3.99" || result.Verification.CurrentPrice.Currency != "USD" {
 		t.Fatalf("expected verified current price 3.99 USD, got %+v", result.Verification.CurrentPrice)
+	}
+}
+
+func TestIAPSetupFutureStartDateVerificationSucceeds(t *testing.T) {
+	setupAuth(t)
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
+	t.Setenv("HOME", t.TempDir())
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	requestCount := 0
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestCount++
+		switch requestCount {
+		case 1:
+			if req.Method != http.MethodPost || req.URL.Path != "/v2/inAppPurchases" {
+				t.Fatalf("unexpected create request: %s %s", req.Method, req.URL.Path)
+			}
+			body := `{"data":{"type":"inAppPurchases","id":"iap-1","attributes":{"name":"Future Lifetime","productId":"future.lifetime","inAppPurchaseType":"NON_CONSUMABLE"}}}`
+			return &http.Response{
+				StatusCode: http.StatusCreated,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 2:
+			if req.Method != http.MethodGet || req.URL.Path != "/v2/inAppPurchases/iap-1/pricePoints" {
+				t.Fatalf("unexpected price-point lookup request: %s %s", req.Method, req.URL.String())
+			}
+			body := `{"data":[{"type":"inAppPurchasePricePoints","id":"pp-399","attributes":{"customerPrice":"3.99","proceeds":"2.79"}}],"links":{"next":""}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 3:
+			if req.Method != http.MethodPost || req.URL.Path != "/v1/inAppPurchasePriceSchedules" {
+				t.Fatalf("unexpected price schedule request: %s %s", req.Method, req.URL.Path)
+			}
+			body := `{"data":{"type":"inAppPurchasePriceSchedules","id":"sched-1","attributes":{}}}`
+			return &http.Response{
+				StatusCode: http.StatusCreated,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 4:
+			if req.Method != http.MethodGet || req.URL.Path != "/v2/inAppPurchases/iap-1" {
+				t.Fatalf("unexpected verify iap request: %s %s", req.Method, req.URL.Path)
+			}
+			body := `{"data":{"type":"inAppPurchases","id":"iap-1","attributes":{"name":"Future Lifetime","productId":"future.lifetime","inAppPurchaseType":"NON_CONSUMABLE"}}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 5:
+			if req.Method != http.MethodGet || req.URL.Path != "/v2/inAppPurchases/iap-1/iapPriceSchedule" {
+				t.Fatalf("unexpected verify schedule request: %s %s", req.Method, req.URL.String())
+			}
+			body := `{
+				"data":{
+					"type":"inAppPurchasePriceSchedules",
+					"id":"sched-1",
+					"relationships":{"baseTerritory":{"data":{"type":"territories","id":"USA"}}}
+				},
+				"included":[
+					{
+						"type":"inAppPurchasePrices",
+						"id":"price-1",
+						"attributes":{"startDate":"2099-01-01","manual":true},
+						"relationships":{
+							"territory":{"data":{"type":"territories","id":"USA"}},
+							"inAppPurchasePricePoint":{"data":{"type":"inAppPurchasePricePoints","id":"pp-399"}}
+						}
+					},
+					{"type":"territories","id":"USA","attributes":{"currency":"USD"}}
+				]
+			}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 6:
+			if req.Method != http.MethodGet || req.URL.Path != "/v2/inAppPurchases/iap-1/iapPriceSchedule" {
+				t.Fatalf("unexpected scheduled verification schedule request: %s %s", req.Method, req.URL.String())
+			}
+			body := `{
+				"data":{
+					"type":"inAppPurchasePriceSchedules",
+					"id":"sched-1",
+					"relationships":{"baseTerritory":{"data":{"type":"territories","id":"USA"}}}
+				},
+				"included":[
+					{
+						"type":"inAppPurchasePrices",
+						"id":"price-1",
+						"attributes":{"startDate":"2099-01-01","manual":true},
+						"relationships":{
+							"territory":{"data":{"type":"territories","id":"USA"}},
+							"inAppPurchasePricePoint":{"data":{"type":"inAppPurchasePricePoints","id":"pp-399"}}
+						}
+					},
+					{"type":"territories","id":"USA","attributes":{"currency":"USD"}}
+				]
+			}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 7:
+			if req.Method != http.MethodGet || req.URL.Path != "/v2/inAppPurchases/iap-1/pricePoints" {
+				t.Fatalf("unexpected scheduled verification price-point request: %s %s", req.Method, req.URL.String())
+			}
+			body := `{"data":[{"type":"inAppPurchasePricePoints","id":"pp-399","attributes":{"customerPrice":"3.99","proceeds":"2.79"}}],"included":[{"type":"territories","id":"USA","attributes":{"currency":"USD"}}],"links":{"next":""}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		default:
+			t.Fatalf("unexpected extra request: %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	root := RootCommand("1.2.3")
+	root.FlagSet.SetOutput(io.Discard)
+
+	var result iapSetupOutput
+	stdout, stderr := captureOutput(t, func() {
+		if err := root.Parse([]string{
+			"iap", "setup",
+			"--app", "app-1",
+			"--type", "NON_CONSUMABLE",
+			"--reference-name", "Future Lifetime",
+			"--product-id", "future.lifetime",
+			"--price", "3.99",
+			"--base-territory", "USA",
+			"--start-date", "2099-01-01",
+			"--refresh",
+			"--output", "json",
+		}); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		if err := root.Run(context.Background()); err != nil {
+			t.Fatalf("run error: %v", err)
+		}
+	})
+
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if requestCount != 7 {
+		t.Fatalf("expected create, lookup, schedule, and future verification reads, got %d requests", requestCount)
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("parse setup result: %v\nstdout=%q", err, stdout)
+	}
+	if result.Status != "ok" {
+		t.Fatalf("expected ok status, got %q", result.Status)
+	}
+	if result.Verification.Status != "verified" {
+		t.Fatalf("expected verified future-schedule result, got %+v", result.Verification)
+	}
+	if result.Verification.PriceVerified == nil || !*result.Verification.PriceVerified {
+		t.Fatalf("expected future scheduled price to be verified, got %+v", result.Verification)
+	}
+	if result.Verification.CurrentPrice != nil {
+		t.Fatalf("expected no current price for future schedule, got %+v", result.Verification.CurrentPrice)
+	}
+	if result.Verification.ScheduledPrice == nil || result.Verification.ScheduledPrice.Amount != "3.99" || result.Verification.ScheduledPrice.Currency != "USD" {
+		t.Fatalf("expected scheduled price 3.99 USD, got %+v", result.Verification.ScheduledPrice)
+	}
+	if result.Verification.ScheduledStartDate != "2099-01-01" {
+		t.Fatalf("expected scheduled start date 2099-01-01, got %q", result.Verification.ScheduledStartDate)
 	}
 }

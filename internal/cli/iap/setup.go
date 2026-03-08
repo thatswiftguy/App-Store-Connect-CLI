@@ -48,6 +48,7 @@ type iapSetupStepResult struct {
 
 type iapSetupResult struct {
 	Status               string                `json:"status"`
+	Error                string                `json:"error,omitempty"`
 	AppID                string                `json:"appId"`
 	Type                 string                `json:"type"`
 	ProductID            string                `json:"productId"`
@@ -70,6 +71,8 @@ type iapSetupVerification struct {
 	PriceVerified      *bool     `json:"priceVerified,omitempty"`
 	BaseTerritory      string    `json:"baseTerritory,omitempty"`
 	CurrentPrice       *iapMoney `json:"currentPrice,omitempty"`
+	ScheduledPrice     *iapMoney `json:"scheduledPrice,omitempty"`
+	ScheduledStartDate string    `json:"scheduledStartDate,omitempty"`
 	EstimatedProceeds  *iapMoney `json:"estimatedProceeds,omitempty"`
 }
 
@@ -245,7 +248,13 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 	client, err := shared.GetASCClient()
 	if err != nil {
 		result.Status = "error"
+		result.Error = err.Error()
 		result.FailedStep = iapSetupStepCreateIAP
+		result.Steps = append(result.Steps, iapSetupStepResult{
+			Name:    iapSetupStepCreateIAP,
+			Status:  "failed",
+			Message: err.Error(),
+		})
 		return result, fmt.Errorf("iap setup: %w", err)
 	}
 
@@ -260,6 +269,7 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 	})
 	if err != nil {
 		result.Status = "error"
+		result.Error = err.Error()
 		result.FailedStep = iapSetupStepCreateIAP
 		result.Steps = append(result.Steps, iapSetupStepResult{
 			Name:    iapSetupStepCreateIAP,
@@ -290,6 +300,7 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 		})
 		if err != nil {
 			result.Status = "error"
+			result.Error = err.Error()
 			result.FailedStep = iapSetupStepCreateLocalization
 			result.Steps = append(result.Steps, iapSetupStepResult{
 				Name:    iapSetupStepCreateLocalization,
@@ -334,6 +345,7 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 			tiers, err := shared.ResolveIAPTiers(requestCtx, client, result.IAPID, opts.BaseTerritory, opts.RefreshTierCache)
 			if err != nil {
 				result.Status = "error"
+				result.Error = err.Error()
 				result.FailedStep = iapSetupStepResolvePricePoint
 				result.Steps = append(result.Steps, iapSetupStepResult{
 					Name:    iapSetupStepResolvePricePoint,
@@ -349,6 +361,7 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 			}
 			if err != nil {
 				result.Status = "error"
+				result.Error = err.Error()
 				result.FailedStep = iapSetupStepResolvePricePoint
 				result.Steps = append(result.Steps, iapSetupStepResult{
 					Name:    iapSetupStepResolvePricePoint,
@@ -376,6 +389,7 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 		})
 		if err != nil {
 			result.Status = "error"
+			result.Error = err.Error()
 			result.FailedStep = iapSetupStepCreatePriceSchedule
 			result.Steps = append(result.Steps, iapSetupStepResult{
 				Name:    iapSetupStepCreatePriceSchedule,
@@ -406,6 +420,7 @@ func executeIAPSetup(ctx context.Context, opts iapSetupOptions) (iapSetupResult,
 	verification, verifyStep, err := verifyIAPSetupState(requestCtx, client, result, opts)
 	if err != nil {
 		result.Status = "error"
+		result.Error = err.Error()
 		result.FailedStep = iapSetupStepVerifyState
 		result.Verification = verification
 		result.Steps = append(result.Steps, verifyStep)
@@ -421,6 +436,7 @@ func verifyIAPSetupState(ctx context.Context, client *asc.Client, result iapSetu
 	verification := &iapSetupVerification{
 		Status: "verified",
 	}
+	now := time.Now().UTC()
 
 	iapResp, err := client.GetInAppPurchaseV2(ctx, result.IAPID)
 	if err != nil {
@@ -502,7 +518,7 @@ func verifyIAPSetupState(ctx context.Context, client *asc.Client, result iapSetu
 
 	hasPricing := opts.BaseTerritory != "" || opts.PricePointID != "" || opts.Tier > 0 || opts.Price != "" || opts.StartDate != "" || opts.RefreshTierCache
 	if hasPricing {
-		summary, err := resolveIAPPriceSummary(ctx, client, iapResp.Data, opts.BaseTerritory, time.Now().UTC())
+		summary, err := resolveIAPPriceSummary(ctx, client, iapResp.Data, opts.BaseTerritory, now)
 		if err != nil {
 			verification.Status = "failed"
 			return verification, iapSetupStepResult{
@@ -522,25 +538,42 @@ func verifyIAPSetupState(ctx context.Context, client *asc.Client, result iapSetu
 				Message: fmt.Sprintf("base territory mismatch: got %q", summary.BaseTerritory),
 			}, fmt.Errorf("base territory mismatch: got %q want %q", summary.BaseTerritory, opts.BaseTerritory)
 		}
-		if summary.CurrentPrice == nil {
-			verification.Status = "failed"
-			return verification, iapSetupStepResult{
-				Name:    iapSetupStepVerifyState,
-				Status:  "failed",
-				Message: "current price missing after schedule creation",
-			}, fmt.Errorf("current price missing after schedule creation")
-		}
-		if opts.Price != "" && strings.TrimSpace(summary.CurrentPrice.Amount) != opts.Price {
-			verification.Status = "failed"
-			return verification, iapSetupStepResult{
-				Name:    iapSetupStepVerifyState,
-				Status:  "failed",
-				Message: fmt.Sprintf("current price mismatch: got %q", summary.CurrentPrice.Amount),
-			}, fmt.Errorf("current price mismatch: got %q want %q", summary.CurrentPrice.Amount, opts.Price)
-		}
+		if isFutureSetupStartDate(opts.StartDate, now) {
+			scheduledPrice, scheduledStartDate, err := verifyScheduledIAPSetupPrice(ctx, client, result.IAPID, opts.BaseTerritory, opts.StartDate, opts.Price)
+			if err != nil {
+				verification.Status = "failed"
+				return verification, iapSetupStepResult{
+					Name:    iapSetupStepVerifyState,
+					Status:  "failed",
+					Message: err.Error(),
+				}, err
+			}
+			value := true
+			verification.PriceVerified = &value
+			verification.ScheduledPrice = scheduledPrice
+			verification.ScheduledStartDate = scheduledStartDate
+			verification.CurrentPrice = nil
+		} else {
+			if summary.CurrentPrice == nil {
+				verification.Status = "failed"
+				return verification, iapSetupStepResult{
+					Name:    iapSetupStepVerifyState,
+					Status:  "failed",
+					Message: "current price missing after schedule creation",
+				}, fmt.Errorf("current price missing after schedule creation")
+			}
+			if opts.Price != "" && strings.TrimSpace(summary.CurrentPrice.Amount) != opts.Price {
+				verification.Status = "failed"
+				return verification, iapSetupStepResult{
+					Name:    iapSetupStepVerifyState,
+					Status:  "failed",
+					Message: fmt.Sprintf("current price mismatch: got %q", summary.CurrentPrice.Amount),
+				}, fmt.Errorf("current price mismatch: got %q want %q", summary.CurrentPrice.Amount, opts.Price)
+			}
 
-		value := true
-		verification.PriceVerified = &value
+			value := true
+			verification.PriceVerified = &value
+		}
 	}
 
 	return verification, iapSetupStepResult{
@@ -549,13 +582,78 @@ func verifyIAPSetupState(ctx context.Context, client *asc.Client, result iapSetu
 	}, nil
 }
 
+func verifyScheduledIAPSetupPrice(ctx context.Context, client *asc.Client, iapID, territory, startDate, expectedPrice string) (*iapMoney, string, error) {
+	scheduleResp, err := client.GetInAppPurchasePriceSchedule(
+		ctx,
+		iapID,
+		asc.WithIAPPriceScheduleInclude([]string{"baseTerritory", "manualPrices", "automaticPrices"}),
+		asc.WithIAPPriceScheduleFields([]string{"baseTerritory", "manualPrices", "automaticPrices"}),
+		asc.WithIAPPriceScheduleTerritoryFields([]string{"currency"}),
+		asc.WithIAPPriceSchedulePriceFields([]string{"startDate", "endDate", "manual", "inAppPurchasePricePoint", "territory"}),
+		asc.WithIAPPriceScheduleManualPricesLimit(maxIncludedScheduleLimit),
+		asc.WithIAPPriceScheduleAutomaticPricesLimit(maxIncludedScheduleLimit),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("fetch price schedule for verification: %w", err)
+	}
+
+	entries, territoryCurrencies, err := parseIAPPriceScheduleIncluded(scheduleResp.Included)
+	if err != nil {
+		return nil, "", fmt.Errorf("parse price schedule for verification: %w", err)
+	}
+	if scheduleEntriesRequireFullFetch(entries) {
+		entries, err = fetchAllSchedulePriceEntries(ctx, client, scheduleResp.Data.ID)
+		if err != nil {
+			return nil, "", fmt.Errorf("fetch full price schedule entries for verification: %w", err)
+		}
+	}
+
+	var matched *iapPriceEntry
+	for idx := range entries {
+		if strings.ToUpper(strings.TrimSpace(entries[idx].TerritoryID)) != territory {
+			continue
+		}
+		if strings.TrimSpace(entries[idx].StartDate) != startDate {
+			continue
+		}
+		matched = &entries[idx]
+		break
+	}
+	if matched == nil {
+		return nil, "", fmt.Errorf("no scheduled price entry found for territory %q starting on %q", territory, startDate)
+	}
+
+	pointValues, currency, err := fetchIAPPricePointValues(ctx, client, iapID, territory)
+	if err != nil {
+		return nil, "", err
+	}
+	if currency == "" {
+		currency = territoryCurrencies[territory]
+	}
+	if currency == "" {
+		currency = territory
+	}
+	value, ok := pointValues[matched.PricePointID]
+	if !ok {
+		return nil, "", fmt.Errorf("scheduled price point %q was not returned for territory %q", matched.PricePointID, territory)
+	}
+	if expectedPrice != "" && strings.TrimSpace(value.CustomerPrice) != expectedPrice {
+		return nil, "", fmt.Errorf("scheduled price mismatch: got %q want %q", value.CustomerPrice, expectedPrice)
+	}
+
+	return &iapMoney{
+		Amount:   value.CustomerPrice,
+		Currency: currency,
+	}, matched.StartDate, nil
+}
+
 func printIAPSetupResult(result *iapSetupResult, format string, pretty bool) error {
 	return shared.PrintOutputWithRenderers(
 		result,
 		format,
 		pretty,
 		func() error {
-			headers := []string{"Status", "Verification", "IAP ID", "Localization ID", "Price Schedule ID", "Price Point ID", "Current Price", "Failed Step"}
+			headers := []string{"Status", "Verification", "IAP ID", "Localization ID", "Price Schedule ID", "Price Point ID", "Current Price", "Failed Step", "Error"}
 			rows := [][]string{{
 				result.Status,
 				iapSetupVerificationStatus(result.Verification),
@@ -565,12 +663,13 @@ func printIAPSetupResult(result *iapSetupResult, format string, pretty bool) err
 				result.ResolvedPricePointID,
 				iapSetupVerificationCurrentPrice(result.Verification),
 				result.FailedStep,
+				result.Error,
 			}}
 			asc.RenderTable(headers, rows)
 			return nil
 		},
 		func() error {
-			headers := []string{"Status", "Verification", "IAP ID", "Localization ID", "Price Schedule ID", "Price Point ID", "Current Price", "Failed Step"}
+			headers := []string{"Status", "Verification", "IAP ID", "Localization ID", "Price Schedule ID", "Price Point ID", "Current Price", "Failed Step", "Error"}
 			rows := [][]string{{
 				result.Status,
 				iapSetupVerificationStatus(result.Verification),
@@ -580,6 +679,7 @@ func printIAPSetupResult(result *iapSetupResult, format string, pretty bool) err
 				result.ResolvedPricePointID,
 				iapSetupVerificationCurrentPrice(result.Verification),
 				result.FailedStep,
+				result.Error,
 			}}
 			asc.RenderMarkdown(headers, rows)
 			return nil
@@ -610,5 +710,23 @@ func iapSetupVerificationCurrentPrice(verification *iapSetupVerification) string
 	if verification == nil {
 		return ""
 	}
-	return formatIAPMoney(verification.CurrentPrice)
+	if verification.CurrentPrice != nil {
+		return formatIAPMoney(verification.CurrentPrice)
+	}
+	if verification.ScheduledPrice != nil {
+		return strings.TrimSpace(formatIAPMoney(verification.ScheduledPrice) + " (effective " + verification.ScheduledStartDate + ")")
+	}
+	return ""
+}
+
+func isFutureSetupStartDate(startDate string, now time.Time) bool {
+	startDate = strings.TrimSpace(startDate)
+	if startDate == "" {
+		return false
+	}
+	parsed, err := time.Parse(iapPricesDateLayout, startDate)
+	if err != nil {
+		return false
+	}
+	return dateOnlyUTC(parsed.UTC()).After(dateOnlyUTC(now))
 }
