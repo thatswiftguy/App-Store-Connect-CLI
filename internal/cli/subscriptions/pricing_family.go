@@ -11,11 +11,13 @@ import (
 
 // SubscriptionsPricingCommand returns the canonical pricing family.
 func SubscriptionsPricingCommand() *ffcli.Command {
-	cmd := buildSubscriptionsPricingSummaryCommand(
-		"pricing",
-		"asc subscriptions pricing <subcommand> [flags]",
-		"Manage subscription pricing.",
-		`Manage subscription pricing.
+	fs := flag.NewFlagSet("pricing", flag.ExitOnError)
+
+	return &ffcli.Command{
+		Name:       "pricing",
+		ShortUsage: "asc subscriptions pricing <subcommand> [flags]",
+		ShortHelp:  "Manage subscription pricing.",
+		LongHelp: `Manage subscription pricing.
 
 Examples:
   asc subscriptions pricing summary --app "APP_ID"
@@ -23,21 +25,18 @@ Examples:
   asc subscriptions pricing prices set --subscription-id "SUB_ID" --price-point "PRICE_POINT_ID"
   asc subscriptions pricing price-points list --subscription-id "SUB_ID" --territory "USA"
   asc subscriptions pricing availability get --subscription-id "SUB_ID"`,
-	)
-	if cmd == nil {
-		return nil
+		FlagSet:   fs,
+		UsageFunc: shared.DefaultUsageFunc,
+		Subcommands: []*ffcli.Command{
+			SubscriptionsPricingSummaryCommand(),
+			SubscriptionsPricingPricesCommand(),
+			SubscriptionsPricingPricePointsCommand(),
+			SubscriptionsPricingAvailabilityCommand(),
+		},
+		Exec: func(ctx context.Context, args []string) error {
+			return flag.ErrHelp
+		},
 	}
-
-	summaryExec := cmd.Exec
-	cmd.Subcommands = []*ffcli.Command{
-		SubscriptionsPricingSummaryCommand(),
-		SubscriptionsPricingPricesCommand(),
-		SubscriptionsPricingPricePointsCommand(),
-		SubscriptionsPricingAvailabilityCommand(),
-	}
-	cmd.Exec = summaryExec
-
-	return cmd
 }
 
 // SubscriptionsPricingPricesCommand returns the canonical prices subgroup.

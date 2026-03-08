@@ -57,6 +57,9 @@ func TestSubscriptionsHelpShowsCanonicalCommerceSubcommands(t *testing.T) {
 			t.Fatalf("expected subscriptions pricing help to list %s, got %q", expected, pricingUsage)
 		}
 	}
+	if strings.Contains(pricingUsage, "\nFLAGS\n") {
+		t.Fatalf("expected subscriptions pricing group help to avoid parent-level leaf flags, got %q", pricingUsage)
+	}
 
 	pricesCmd := findSubcommand(root, "subscriptions", "pricing", "prices")
 	if pricesCmd == nil {
