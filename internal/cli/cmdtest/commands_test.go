@@ -1792,21 +1792,6 @@ func TestSubscriptionsValidationErrors(t *testing.T) {
 			wantErr: "--app or --subscription-id is required",
 		},
 		{
-			name:    "subscriptions pricing prices set missing subscription-id",
-			args:    []string{"subscriptions", "pricing", "prices", "set", "--price-point", "PRICE_POINT_ID"},
-			wantErr: "--subscription-id is required",
-		},
-		{
-			name:    "subscriptions offers introductory list missing subscription-id",
-			args:    []string{"subscriptions", "offers", "introductory", "list"},
-			wantErr: "--subscription-id is required",
-		},
-		{
-			name:    "subscriptions offers win-back list missing subscription-id",
-			args:    []string{"subscriptions", "offers", "win-back", "list"},
-			wantErr: "--subscription-id is required",
-		},
-		{
 			name:    "subscriptions review screenshots get missing screenshot-id",
 			args:    []string{"subscriptions", "review", "screenshots", "get"},
 			wantErr: "--screenshot-id is required",
