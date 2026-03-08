@@ -616,7 +616,7 @@ func DeprecatedBetaDetailsAliasCommand() *ffcli.Command {
 			getCmd.LongHelp = "Compatibility alias: use `asc testflight distribution build view --id DETAIL_ID`."
 		}
 	}
-	return hideTestFlightCommand(cmd)
+	return cmd
 }
 
 func TestFlightMetricsSurfaceCommand() *ffcli.Command {
