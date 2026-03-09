@@ -540,5 +540,12 @@
     "creator": "evanyi",
     "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/4e/a3/3b/4ea33b80-8dcb-11ec-4699-6ccff7efcfa9/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
     "platform": ["iOS"]
+  },
+  {
+    "app": "Ryform Golf",
+    "link": "https://apps.apple.com/us/app/id6746525972",
+    "creator": "ajxbit",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/PurpleSource221/v4/63/3b/e6/633be633-48c5-16c8-eb2b-10730e1c5d1c/Placeholder.mill/400x400bb-75.webp",
+    "platform": ["iOS"]
   }
 ]
