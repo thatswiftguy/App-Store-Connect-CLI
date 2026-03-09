@@ -255,7 +255,7 @@ func normalizeCommunityPlatforms(platforms []string) []string {
 		if value == "" {
 			continue
 		}
-		if !containsCommunityPlatformFold(normalized, value) {
+		if !containsCommunityValueFold(normalized, value) {
 			normalized = append(normalized, value)
 		}
 	}
@@ -263,18 +263,7 @@ func normalizeCommunityPlatforms(platforms []string) []string {
 }
 
 func normalizeCommunityPlatform(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-
-	key := strings.ToLower(trimmed)
-	key = strings.ReplaceAll(key, "-", "_")
-	key = strings.ReplaceAll(key, " ", "")
-	if normalized, ok := communityWallPlatformAliases[key]; ok {
-		return normalized
-	}
-	return trimmed
+	return normalizeCommunityLabelWithAliases(value, communityWallPlatformAliases)
 }
 
 func normalizeCommunityPlatformFilters(values []string) map[string]struct{} {
@@ -319,7 +308,22 @@ func hasCommunityPlatform(platforms []string, allowed map[string]struct{}) bool 
 	return false
 }
 
-func containsCommunityPlatformFold(values []string, needle string) bool {
+func normalizeCommunityLabelWithAliases(value string, aliases map[string]string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+
+	key := strings.ToLower(trimmed)
+	key = strings.ReplaceAll(key, "-", "_")
+	key = strings.ReplaceAll(key, " ", "")
+	if normalized, ok := aliases[key]; ok {
+		return normalized
+	}
+	return trimmed
+}
+
+func containsCommunityValueFold(values []string, needle string) bool {
 	for _, value := range values {
 		if strings.EqualFold(value, needle) {
 			return true

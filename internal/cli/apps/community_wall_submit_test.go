@@ -74,7 +74,7 @@ func TestSubmitCommunityWallEntryDryRunReturnsPlan(t *testing.T) {
 	previousNow := communityWallNow
 	communityWallGitHubAPIBase = server.URL
 	communityWallGitHubClient = func() *http.Client { return server.Client() }
-	communityWallLookupAppDetails = func(ids []string) (map[string]communityWallAppDetails, error) {
+	communityWallLookupAppDetails = func(ctx context.Context, ids []string) (map[string]communityWallAppDetails, error) {
 		return map[string]communityWallAppDetails{
 			"1234567890": {
 				Name: "Beta",
@@ -162,7 +162,7 @@ func TestSubmitCommunityWallEntryRejectsDuplicateAppID(t *testing.T) {
 	previousLookupDetails := communityWallLookupAppDetails
 	communityWallGitHubAPIBase = server.URL
 	communityWallGitHubClient = func() *http.Client { return server.Client() }
-	communityWallLookupAppDetails = func(ids []string) (map[string]communityWallAppDetails, error) {
+	communityWallLookupAppDetails = func(ctx context.Context, ids []string) (map[string]communityWallAppDetails, error) {
 		return map[string]communityWallAppDetails{
 			"1234567890": {
 				Name: "Beta 2",

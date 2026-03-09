@@ -454,7 +454,7 @@ func validateCommunityWallPlatformCSVValue(ans interface{}) error {
 	return nil
 }
 
-func resolveCommunityWallCandidate(input communityWallSubmitInput) (communityWallEntry, []string, error) {
+func resolveCommunityWallCandidate(ctx context.Context, input communityWallSubmitInput) (communityWallEntry, []string, error) {
 	candidate := communityWallEntry{
 		Creator:  input.Creator,
 		Platform: append([]string(nil), input.Platform...),
@@ -462,7 +462,7 @@ func resolveCommunityWallCandidate(input communityWallSubmitInput) (communityWal
 	warnings := []string{}
 
 	if input.AppID != "" {
-		detailsByID, err := communityWallLookupAppDetails([]string{input.AppID})
+		detailsByID, err := communityWallLookupAppDetails(ctx, []string{input.AppID})
 		if err != nil {
 			return communityWallEntry{}, nil, fmt.Errorf("failed to resolve app %q from the App Store lookup: %w", input.AppID, err)
 		}
@@ -483,7 +483,7 @@ func resolveCommunityWallCandidate(input communityWallSubmitInput) (communityWal
 	} else {
 		candidate.App = strings.TrimSpace(input.Name)
 		candidate.Link = strings.TrimSpace(input.Link)
-		if iconURL, err := communityWallIconForLink(candidate.Link); err != nil {
+		if iconURL, err := communityWallIconForLink(ctx, candidate.Link); err != nil {
 			warnings = append(warnings, fmt.Sprintf("unable to refresh App Store icon: %v", err))
 		} else if strings.TrimSpace(iconURL) != "" {
 			candidate.Icon = iconURL
@@ -509,7 +509,7 @@ func submitCommunityWallEntry(ctx context.Context, req communityWallSubmitReques
 	}
 
 	client := communityWallGitHubClientAPI{Token: req.GitHubToken}
-	candidate, warnings, err := resolveCommunityWallCandidate(req.Input)
+	candidate, warnings, err := resolveCommunityWallCandidate(ctx, req.Input)
 	if err != nil {
 		return nil, err
 	}
@@ -709,11 +709,11 @@ func normalizeCommunityWallSourceEntry(entry communityWallEntry, index int) (com
 
 	platforms := make([]string, 0, len(entry.Platform))
 	for _, value := range entry.Platform {
-		normalized := canonicalCommunityWallPlatformLabel(value)
+		normalized := normalizeCommunityPlatformLabelForDisplay(value)
 		if normalized == "" {
 			return communityWallEntry{}, fmt.Errorf("entry #%d: 'platform' entries must be non-empty strings", index)
 		}
-		if !containsCommunityWallLabelFold(platforms, normalized) {
+		if !containsCommunityValueFold(platforms, normalized) {
 			platforms = append(platforms, normalized)
 		}
 	}
@@ -740,8 +740,8 @@ func splitCommunityWallPlatformCSV(value string) []string {
 	parts := strings.Split(value, ",")
 	platforms := make([]string, 0, len(parts))
 	for _, part := range parts {
-		normalized := canonicalCommunityWallPlatformLabel(part)
-		if normalized == "" || containsCommunityWallLabelFold(platforms, normalized) {
+		normalized := normalizeCommunityPlatformLabelForDisplay(part)
+		if normalized == "" || containsCommunityValueFold(platforms, normalized) {
 			continue
 		}
 		platforms = append(platforms, normalized)
@@ -749,28 +749,8 @@ func splitCommunityWallPlatformCSV(value string) []string {
 	return platforms
 }
 
-func canonicalCommunityWallPlatformLabel(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-
-	key := strings.ToLower(trimmed)
-	key = strings.ReplaceAll(key, "-", "_")
-	key = strings.ReplaceAll(key, " ", "")
-	if normalized, ok := communityWallPlatformDisplayAliases[key]; ok {
-		return normalized
-	}
-	return trimmed
-}
-
-func containsCommunityWallLabelFold(values []string, needle string) bool {
-	for _, value := range values {
-		if strings.EqualFold(value, needle) {
-			return true
-		}
-	}
-	return false
+func normalizeCommunityPlatformLabelForDisplay(value string) string {
+	return normalizeCommunityLabelWithAliases(value, communityWallPlatformDisplayAliases)
 }
 
 func addCommunityWallSourceEntry(entries []communityWallEntry, candidate communityWallEntry) ([]communityWallEntry, error) {
@@ -876,13 +856,13 @@ func quoteCommunityWallJSON(value string) (string, error) {
 	return strings.TrimSuffix(buffer.String(), "\n"), nil
 }
 
-func communityWallIconForLink(link string) (string, error) {
+func communityWallIconForLink(ctx context.Context, link string) (string, error) {
 	appStoreID := extractCommunityWallAppStoreID(link)
 	if appStoreID == "" {
 		return "", nil
 	}
 
-	detailsByID, err := communityWallLookupAppDetails([]string{appStoreID})
+	detailsByID, err := communityWallLookupAppDetails(ctx, []string{appStoreID})
 	if err != nil {
 		return "", err
 	}
@@ -917,19 +897,19 @@ func extractCommunityWallAppStoreID(link string) string {
 	return matches[1]
 }
 
-func fetchCommunityWallAppDetails(ids []string) (map[string]communityWallAppDetails, error) {
+func fetchCommunityWallAppDetails(ctx context.Context, ids []string) (map[string]communityWallAppDetails, error) {
 	query := url.Values{}
 	query.Set("id", strings.Join(ids, ","))
 	query.Set("country", "us")
 
 	requestURL := communityWallAppStoreLookupURL + "?" + query.Encode()
-	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build app store lookup request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 
-	httpClient := &http.Client{Timeout: 15 * time.Second}
+	httpClient := &http.Client{Timeout: asc.ResolveTimeout()}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("app store lookup request failed: %w", err)
