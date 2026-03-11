@@ -87,7 +87,6 @@ asc <subcommand> [flags]
 - `build-bundles` - Manage build bundles and App Clip data.
 - `pre-release-versions` - Manage TestFlight pre-release versions.
 - `build-localizations` - Manage build release notes localizations.
-- `beta-app-localizations` - Manage TestFlight beta app localizations.
 - `sandbox` - Manage sandbox testers in App Store Connect.
 
 ### Review and Release
