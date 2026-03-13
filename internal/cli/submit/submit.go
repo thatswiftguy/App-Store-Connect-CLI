@@ -99,7 +99,7 @@ Examples:
 			}
 
 			localizationCtx, localizationCancel := shared.ContextWithTimeout(ctx)
-			if err := runSubmitCreateLocalizationPreflight(localizationCtx, client, resolvedAppID, resolvedVersionID); err != nil {
+			if err := runSubmitCreateLocalizationPreflight(localizationCtx, client, resolvedAppID, resolvedVersionID, normalizedPlatform); err != nil {
 				localizationCancel()
 				return err
 			}
@@ -154,7 +154,7 @@ Examples:
 	}
 }
 
-func runSubmitCreateLocalizationPreflight(ctx context.Context, client *asc.Client, appID, versionID string) error {
+func runSubmitCreateLocalizationPreflight(ctx context.Context, client *asc.Client, appID, versionID, platform string) error {
 	localizations, err := client.GetAppStoreVersionLocalizations(ctx, versionID, asc.WithAppStoreVersionLocalizationsLimit(200))
 	if err != nil {
 		return fmt.Errorf("submit create: failed to fetch version localizations for preflight: %w", err)
@@ -164,8 +164,13 @@ func runSubmitCreateLocalizationPreflight(ctx context.Context, client *asc.Clien
 		return fmt.Errorf("submit create: submit preflight failed")
 	}
 
+	requireWhatsNew, err := isAppUpdate(ctx, client, appID, platform)
+	if err != nil {
+		return fmt.Errorf("submit create: failed to determine whether version is an app update for preflight: %w", err)
+	}
+
 	opts := shared.SubmitReadinessOptions{
-		RequireWhatsNew: isAppUpdate(ctx, client, appID),
+		RequireWhatsNew: requireWhatsNew,
 	}
 
 	issues := shared.SubmitReadinessIssuesByLocaleWithOptions(localizations.Data, opts)
@@ -181,25 +186,28 @@ func runSubmitCreateLocalizationPreflight(ctx context.Context, client *asc.Clien
 	return fmt.Errorf("submit create: submit preflight failed")
 }
 
-// isAppUpdate returns true if the app has ever been released, meaning this
-// submission is an update and whatsNew is required. Checks for READY_FOR_SALE
-// as well as DEVELOPER_REMOVED_FROM_SALE and REMOVED_FROM_SALE, since apps
-// that were published then removed are still considered updates by Apple.
-func isAppUpdate(ctx context.Context, client *asc.Client, appID string) bool {
-	versions, err := client.GetAppStoreVersions(ctx, appID,
+// isAppUpdate returns true if the target platform has ever been released,
+// meaning this submission is an update and whatsNew is required. Checks for
+// READY_FOR_SALE as well as removed-from-sale states, since apps that were
+// previously published then removed are still considered updates by Apple.
+func isAppUpdate(ctx context.Context, client *asc.Client, appID, platform string) (bool, error) {
+	opts := []asc.AppStoreVersionsOption{
 		asc.WithAppStoreVersionsStates([]string{
 			"READY_FOR_SALE",
 			"DEVELOPER_REMOVED_FROM_SALE",
 			"REMOVED_FROM_SALE",
 		}),
 		asc.WithAppStoreVersionsLimit(1),
-	)
-	if err != nil {
-		// On failure, assume update to be safe — better to warn about
-		// missing whatsNew than to let it through and have Apple reject.
-		return true
 	}
-	return len(versions.Data) > 0
+	if strings.TrimSpace(platform) != "" {
+		opts = append(opts, asc.WithAppStoreVersionsPlatforms([]string{platform}))
+	}
+
+	versions, err := client.GetAppStoreVersions(ctx, appID, opts...)
+	if err != nil {
+		return false, err
+	}
+	return len(versions.Data) > 0, nil
 }
 
 func SubmitStatusCommand() *ffcli.Command {

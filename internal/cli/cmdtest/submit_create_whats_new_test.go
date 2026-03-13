@@ -98,6 +98,199 @@ func TestSubmitCreatePreflightCatchesMissingWhatsNew(t *testing.T) {
 	}
 }
 
+func TestSubmitCreatePreflightSkipsWhatsNewForFirstVersionOnDifferentPlatform(t *testing.T) {
+	setupAuth(t)
+	t.Setenv("ASC_APP_ID", "")
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	preflightPassed := false
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/apps/app-123/appStoreVersions":
+			query := req.URL.Query()
+			if strings.Contains(query.Get("filter[appStoreState]"), "READY_FOR_SALE") {
+				if query.Get("filter[platform]") == "TV_OS" {
+					body := `{"data":[]}`
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Header:     http.Header{"Content-Type": []string{"application/json"}},
+					}, nil
+				}
+
+				// The app has a shipped iOS version, but this TV_OS submission is a first release.
+				body := `{"data":[{"type":"appStoreVersions","id":"version-ios-live","attributes":{"versionString":"1.0.0","appStoreState":"READY_FOR_SALE","platform":"IOS"}}]}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+				}, nil
+			}
+
+			body := `{"data":[{"type":"appStoreVersions","id":"version-tv","attributes":{"versionString":"1.0.0","appStoreState":"PREPARE_FOR_SUBMISSION","platform":"TV_OS"}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/appStoreVersions/version-tv/appStoreVersionLocalizations":
+			preflightPassed = true
+			body := `{"data":[{"type":"appStoreVersionLocalizations","id":"loc-1","attributes":{"locale":"en-US","description":"desc","keywords":"kw","supportUrl":"https://example.com","whatsNew":""}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/apps/app-123/subscriptionGroups":
+			body := `{"data":[]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		case req.Method == http.MethodPatch && req.URL.Path == "/v1/appStoreVersions/version-tv/relationships/build":
+			body := `{"errors":[{"status":"409","detail":"attach build reached"}]}`
+			return &http.Response{
+				StatusCode: http.StatusConflict,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		default:
+			t.Logf("unexpected request: %s %s", req.Method, req.URL.String())
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(strings.NewReader(`{"errors":[{"status":"404"}]}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		}
+	})
+
+	root := RootCommand("1.2.3")
+	root.FlagSet.SetOutput(io.Discard)
+
+	var runErr error
+	_, stderr := captureOutput(t, func() {
+		if err := root.Parse([]string{
+			"submit", "create",
+			"--app", "app-123",
+			"--version", "1.0.0",
+			"--build", "build-tv",
+			"--platform", "TV_OS",
+			"--confirm",
+		}); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		runErr = root.Run(context.Background())
+	})
+
+	if !preflightPassed {
+		t.Fatal("localization preflight was never reached")
+	}
+	if runErr == nil {
+		t.Fatal("expected build attach error after passing preflight")
+	}
+	if !strings.Contains(runErr.Error(), "attach build reached") {
+		t.Fatalf("expected attach build error, got %v", runErr)
+	}
+	if strings.Contains(runErr.Error(), "submit preflight failed") {
+		t.Fatalf("expected non-preflight error, got %v", runErr)
+	}
+	if strings.Contains(stderr, "whatsNew") {
+		t.Fatalf("expected stderr not to mention whatsNew, got %q", stderr)
+	}
+}
+
+func TestSubmitCreatePreflightReturnsUpdateLookupError(t *testing.T) {
+	setupAuth(t)
+	t.Setenv("ASC_APP_ID", "")
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/apps/app-123/appStoreVersions":
+			query := req.URL.Query()
+			if strings.Contains(query.Get("filter[appStoreState]"), "READY_FOR_SALE") {
+				body := `{"errors":[{"status":"500","detail":"update lookup failed"}]}`
+				return &http.Response{
+					StatusCode: http.StatusInternalServerError,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+				}, nil
+			}
+
+			body := `{"data":[{"type":"appStoreVersions","id":"version-first","attributes":{"versionString":"1.0.0","appStoreState":"PREPARE_FOR_SUBMISSION","platform":"IOS"}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/appStoreVersions/version-first/appStoreVersionLocalizations":
+			body := `{"data":[{"type":"appStoreVersionLocalizations","id":"loc-1","attributes":{"locale":"en-US","description":"desc","keywords":"kw","supportUrl":"https://example.com","whatsNew":""}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+
+		default:
+			t.Logf("unexpected request: %s %s", req.Method, req.URL.String())
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Body:       io.NopCloser(strings.NewReader(`{"errors":[{"status":"404"}]}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		}
+	})
+
+	root := RootCommand("1.2.3")
+	root.FlagSet.SetOutput(io.Discard)
+
+	var runErr error
+	_, stderr := captureOutput(t, func() {
+		if err := root.Parse([]string{
+			"submit", "create",
+			"--app", "app-123",
+			"--version", "1.0.0",
+			"--build", "build-1",
+			"--confirm",
+		}); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		runErr = root.Run(context.Background())
+	})
+
+	if runErr == nil {
+		t.Fatal("expected update lookup error")
+	}
+	if !strings.Contains(runErr.Error(), "failed to determine whether version is an app update") {
+		t.Fatalf("expected update lookup context, got %v", runErr)
+	}
+	if !strings.Contains(runErr.Error(), "update lookup failed") {
+		t.Fatalf("expected original lookup error, got %v", runErr)
+	}
+	if strings.Contains(runErr.Error(), "submit preflight failed") {
+		t.Fatalf("expected update lookup error, got %v", runErr)
+	}
+	if strings.Contains(stderr, "whatsNew") {
+		t.Fatalf("expected stderr not to mention whatsNew, got %q", stderr)
+	}
+}
+
 func TestSubmitCreatePreflightSkipsWhatsNewForFirstVersion(t *testing.T) {
 	setupAuth(t)
 	t.Setenv("ASC_APP_ID", "")
@@ -155,8 +348,10 @@ func TestSubmitCreatePreflightSkipsWhatsNewForFirstVersion(t *testing.T) {
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 			}, nil
 
-		case req.Method == http.MethodGet && req.URL.Path == "/v1/reviewSubmissions":
-			// cancelStaleReviewSubmissions
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/apps/app-123/reviewSubmissions":
+			if req.URL.Query().Get("filter[state]") != "READY_FOR_REVIEW" || req.URL.Query().Get("filter[platform]") != "IOS" {
+				t.Fatalf("unexpected review submissions filters: %s", req.URL.RawQuery)
+			}
 			body := `{"data":[]}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
