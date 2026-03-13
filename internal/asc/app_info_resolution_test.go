@@ -61,6 +61,16 @@ func TestAutoResolveAppInfoIDByVersionState(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:         "maps preorder ready for sale to ready for distribution",
+			versionState: "PREORDER_READY_FOR_SALE",
+			candidates: []AppInfoCandidate{
+				{ID: "info-1", State: "READY_FOR_REVIEW"},
+				{ID: "info-2", State: "READY_FOR_DISTRIBUTION"},
+			},
+			wantID: "info-2",
+			wantOK: true,
+		},
+		{
 			name:         "returns false when alias remains ambiguous",
 			versionState: "PENDING_DEVELOPER_RELEASE",
 			candidates: []AppInfoCandidate{
@@ -81,5 +91,17 @@ func TestAutoResolveAppInfoIDByVersionState(t *testing.T) {
 				t.Fatalf("AutoResolveAppInfoIDByVersionState() id = %q, want %q", gotID, tt.wantID)
 			}
 		})
+	}
+}
+
+func TestResolveAppStoreVersionStatePrefersAppVersionState(t *testing.T) {
+	attrs := AppStoreVersionAttributes{
+		AppVersionState: "PREORDER_READY_FOR_SALE",
+		AppStoreState:   "READY_FOR_SALE",
+	}
+
+	got := ResolveAppStoreVersionState(attrs)
+	if got != "PREORDER_READY_FOR_SALE" {
+		t.Fatalf("ResolveAppStoreVersionState() = %q, want %q", got, "PREORDER_READY_FOR_SALE")
 	}
 }

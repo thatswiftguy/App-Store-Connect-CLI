@@ -58,7 +58,7 @@ func (c *Client) ResolveAppInfoIDForAppStoreVersion(ctx context.Context, version
 
 	candidates := AppInfoCandidates(appInfos.Data)
 
-	if resolvedID, ok := AutoResolveAppInfoIDByVersionState(candidates, resolveAppStoreVersionState(versionResp.Data.Attributes)); ok {
+	if resolvedID, ok := AutoResolveAppInfoIDByVersionState(candidates, ResolveAppStoreVersionState(versionResp.Data.Attributes)); ok {
 		return resolvedID, nil
 	}
 
@@ -70,7 +70,8 @@ func (c *Client) ResolveAppInfoIDForAppStoreVersion(ctx context.Context, version
 	)
 }
 
-func resolveAppStoreVersionState(attrs AppStoreVersionAttributes) string {
+// ResolveAppStoreVersionState prefers AppVersionState and falls back to AppStoreState.
+func ResolveAppStoreVersionState(attrs AppStoreVersionAttributes) string {
 	if trimmed := strings.TrimSpace(attrs.AppVersionState); trimmed != "" {
 		return trimmed
 	}
@@ -124,7 +125,7 @@ func acceptableAppInfoStatesForVersionState(versionState string) []string {
 		return []string{resolvedVersionState, "PENDING_RELEASE"}
 	case "REPLACED_WITH_NEW_VERSION":
 		return []string{resolvedVersionState, "REPLACED_WITH_NEW_INFO"}
-	case "READY_FOR_SALE":
+	case "READY_FOR_SALE", "PREORDER_READY_FOR_SALE":
 		return []string{resolvedVersionState, "READY_FOR_DISTRIBUTION"}
 	default:
 		return []string{resolvedVersionState}

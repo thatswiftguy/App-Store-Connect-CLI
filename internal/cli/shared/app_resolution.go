@@ -25,7 +25,7 @@ func ResolveAppStoreVersionIDAndState(ctx context.Context, client *asc.Client, a
 	if len(resp.Data) > 1 {
 		return "", "", fmt.Errorf("multiple app store versions found for version %q and platform %q (use --version-id)", version, platform)
 	}
-	return resp.Data[0].ID, strings.TrimSpace(resp.Data[0].Attributes.AppStoreState), nil
+	return resp.Data[0].ID, asc.ResolveAppStoreVersionState(resp.Data[0].Attributes), nil
 }
 
 // ResolveAppStoreVersionID finds a version ID by version string and platform.
