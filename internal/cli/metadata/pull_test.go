@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -67,23 +68,7 @@ func TestBuildMetadataPullAppInfoExample(t *testing.T) {
 
 func TestMetadataPullCommand_ShortUsageMentionsAppInfo(t *testing.T) {
 	cmd := MetadataPullCommand()
-	if cmd.ShortUsage == "" {
-		t.Fatal("expected non-empty ShortUsage")
-	}
-	if !contains(cmd.ShortUsage, "--app-info") {
+	if !strings.Contains(cmd.ShortUsage, "--app-info") {
 		t.Fatalf("expected ShortUsage to mention --app-info, got %q", cmd.ShortUsage)
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchContains(s, substr)
-}
-
-func searchContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
