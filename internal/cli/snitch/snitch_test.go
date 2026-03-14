@@ -90,6 +90,23 @@ func TestIssueTitle(t *testing.T) {
 	}
 }
 
+func TestIssueLabelsIncludesCustomLabelsWithoutDuplicates(t *testing.T) {
+	labels := issueLabels(LogEntry{
+		Severity: "feature-request",
+		Labels:   []string{"enhancement", "p3", "easy", "P3"},
+	})
+
+	want := []string{"asc-snitch", "enhancement", "p3", "easy"}
+	if len(labels) != len(want) {
+		t.Fatalf("issueLabels() length = %d, want %d (%v)", len(labels), len(want), labels)
+	}
+	for i, label := range want {
+		if labels[i] != label {
+			t.Fatalf("issueLabels()[%d] = %q, want %q (full=%v)", i, labels[i], label, labels)
+		}
+	}
+}
+
 func TestIssueBody(t *testing.T) {
 	e := LogEntry{
 		Description: "crashes --app doesn't support bundle ID",
