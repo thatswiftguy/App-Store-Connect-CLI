@@ -424,7 +424,7 @@ func TestXcodeCloudProductsRejectsUniqueFuzzyAppName(t *testing.T) {
 	}
 }
 
-func TestXcodeCloudProductsResolvesNumericExactNameBeforeNumericPassthrough(t *testing.T) {
+func TestXcodeCloudProductsTreatsNumericAppAsIDBeforeExactNameLookup(t *testing.T) {
 	setupAuth(t)
 	t.Setenv("ASC_APP_ID", "")
 	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
@@ -439,37 +439,11 @@ func TestXcodeCloudProductsResolvesNumericExactNameBeforeNumericPassthrough(t *t
 		callCount++
 		switch callCount {
 		case 1:
-			if req.Method != http.MethodGet || req.URL.Path != "/v1/apps" {
+			if req.Method != http.MethodGet || req.URL.Path != "/v1/ciProducts" {
 				t.Fatalf("unexpected first request: %s %s", req.Method, req.URL.String())
 			}
-			if req.URL.Query().Get("filter[bundleId]") != "2048" {
-				t.Fatalf("expected bundle filter 2048, got %q", req.URL.Query().Get("filter[bundleId]"))
-			}
-			body := `{"data":[]}`
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-			}, nil
-		case 2:
-			if req.Method != http.MethodGet || req.URL.Path != "/v1/apps" {
-				t.Fatalf("unexpected second request: %s %s", req.Method, req.URL.String())
-			}
-			if req.URL.Query().Get("filter[name]") != "2048" {
-				t.Fatalf("expected name filter 2048, got %q", req.URL.Query().Get("filter[name]"))
-			}
-			body := `{"data":[{"type":"apps","id":"app-2048","attributes":{"name":"2048"}}],"links":{"next":""}}`
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-			}, nil
-		case 3:
-			if req.Method != http.MethodGet || req.URL.Path != "/v1/ciProducts" {
-				t.Fatalf("unexpected third request: %s %s", req.Method, req.URL.String())
-			}
-			if req.URL.Query().Get("filter[app]") != "app-2048" {
-				t.Fatalf("expected filter[app]=app-2048, got %q", req.URL.Query().Get("filter[app]"))
+			if req.URL.Query().Get("filter[app]") != "2048" {
+				t.Fatalf("expected filter[app]=2048, got %q", req.URL.Query().Get("filter[app]"))
 			}
 			body := `{"data":[{"type":"ciProducts","id":"prod-2048","attributes":{"name":"2048"}}]}`
 			return &http.Response{
@@ -501,7 +475,7 @@ func TestXcodeCloudProductsResolvesNumericExactNameBeforeNumericPassthrough(t *t
 	if !strings.Contains(stdout, `"id":"prod-2048"`) {
 		t.Fatalf("expected product output, got %q", stdout)
 	}
-	if callCount != 3 {
-		t.Fatalf("expected exactly 3 requests, got %d", callCount)
+	if callCount != 1 {
+		t.Fatalf("expected exactly 1 request, got %d", callCount)
 	}
 }

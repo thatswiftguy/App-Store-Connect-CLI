@@ -22,10 +22,10 @@ func ResolveAppIDWithExactLookup(ctx context.Context, client appLookupClient, ap
 	if resolved == "" {
 		return "", nil
 	}
+	if isNumericAppID(resolved) {
+		return resolved, nil
+	}
 	if client == nil {
-		if isNumericAppID(resolved) {
-			return resolved, nil
-		}
 		return "", fmt.Errorf("app lookup client is required for non-numeric --app values")
 	}
 
@@ -63,9 +63,6 @@ func ResolveAppIDWithExactLookup(ctx context.Context, client appLookupClient, ap
 		return "", fmt.Errorf("multiple apps found for name %q (%s); use --app with App Store Connect app ID", resolved, strings.Join(nameMatchIDs, ", "))
 	}
 
-	if isNumericAppID(resolved) {
-		return resolved, nil
-	}
 	return "", fmt.Errorf("app %q not found (expected app ID, exact bundle ID, or exact app name)", resolved)
 }
 

@@ -229,7 +229,7 @@ func TestResolveAppIDWithExactLookup_RejectsUniqueFuzzyMatch(t *testing.T) {
 	}
 }
 
-func TestResolveAppIDWithExactLookup_ResolvesNumericExactNameBeforePassthrough(t *testing.T) {
+func TestResolveAppIDWithExactLookup_NumericPassthroughTakesPriorityOverExactName(t *testing.T) {
 	t.Setenv("ASC_APP_ID", "")
 	stub := &sequenceAppLookupStub{
 		responses: []*asc.AppsResponse{
@@ -244,20 +244,17 @@ func TestResolveAppIDWithExactLookup_ResolvesNumericExactNameBeforePassthrough(t
 	if err != nil {
 		t.Fatalf("ResolveAppIDWithExactLookup() error: %v", err)
 	}
-	if got != "app-name" {
-		t.Fatalf("expected numeric exact-name app id app-name, got %q", got)
+	if got != "2048" {
+		t.Fatalf("expected numeric passthrough app id 2048, got %q", got)
+	}
+	if stub.calls != 0 {
+		t.Fatalf("expected numeric passthrough without lookup calls, got %d", stub.calls)
 	}
 }
 
 func TestResolveAppIDWithExactLookup_NumericPassthroughWhenNoExactMatch(t *testing.T) {
 	t.Setenv("ASC_APP_ID", "")
-	stub := &sequenceAppLookupStub{
-		responses: []*asc.AppsResponse{
-			appsResponseFromApps(nil),
-			appsResponseFromApps(nil),
-			appsResponseFromApps(nil),
-		},
-	}
+	stub := &sequenceAppLookupStub{}
 
 	got, err := ResolveAppIDWithExactLookup(context.Background(), stub, "123456789")
 	if err != nil {
@@ -265,5 +262,8 @@ func TestResolveAppIDWithExactLookup_NumericPassthroughWhenNoExactMatch(t *testi
 	}
 	if got != "123456789" {
 		t.Fatalf("expected numeric passthrough app id 123456789, got %q", got)
+	}
+	if stub.calls != 0 {
+		t.Fatalf("expected numeric passthrough without lookup calls, got %d", stub.calls)
 	}
 }
