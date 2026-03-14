@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ const (
 	defaultRepo          = "App-Store-Connect-CLI"
 	maxSearchResults     = 5
 	maxResponseBodyBytes = 8192
+	maxLabelPages        = 10
+	labelsPerPage        = 100
 )
 
 // githubAPIBase is a variable so tests can override it with httptest servers.
@@ -427,6 +430,69 @@ func dedupeLabels(labels []string) []string {
 	}
 
 	return deduped
+}
+
+func listRepoLabels(ctx context.Context, token string) ([]string, error) {
+	seen := make(map[string]struct{})
+	labels := make([]string, 0, labelsPerPage)
+
+	for page := 1; page <= maxLabelPages; page++ {
+		labelsURL := fmt.Sprintf(
+			"%s/repos/%s/%s/labels?per_page=%d&page=%d",
+			githubAPIBase,
+			defaultOwner,
+			defaultRepo,
+			labelsPerPage,
+			page,
+		)
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, labelsURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+
+		resp, err := githubHTTPClient().Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		var pageLabels []struct {
+			Name string `json:"name"`
+		}
+		if resp.StatusCode == http.StatusOK {
+			err = json.NewDecoder(resp.Body).Decode(&pageLabels)
+		} else {
+			err = readGitHubAPIError(resp)
+		}
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, label := range pageLabels {
+			name := strings.TrimSpace(label.Name)
+			if name == "" {
+				continue
+			}
+			key := strings.ToLower(name)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			labels = append(labels, name)
+		}
+
+		if len(pageLabels) < labelsPerPage {
+			break
+		}
+	}
+
+	sort.Strings(labels)
+	return labels, nil
 }
 
 func readLocalLog(path string) ([]LogEntry, error) {
