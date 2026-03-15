@@ -329,29 +329,13 @@ Examples:
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
-			if len(args) > 0 {
-				return shared.UsageError("metadata keywords plan does not accept positional arguments")
-			}
-			result, err := executeMetadataKeywordsPlan(ctx, metadataKeywordsPlanOptions{
+			return runMetadataKeywordsPlanLikeCommand(ctx, args, "metadata keywords plan", metadataKeywordsPlanOptions{
 				AppID:    *appID,
 				Version:  *version,
 				Platform: *platform,
 				Dir:      *dir,
 				DryRun:   true,
-			})
-			if err != nil {
-				if errors.Is(err, flag.ErrHelp) {
-					return err
-				}
-				return fmt.Errorf("metadata keywords plan: %w", err)
-			}
-			return shared.PrintOutputWithRenderers(
-				result,
-				*output.Output,
-				*output.Pretty,
-				func() error { return printMetadataKeywordsPlanTable(result) },
-				func() error { return printMetadataKeywordsPlanMarkdown(result) },
-			)
+			}, output)
 		},
 	}
 }
@@ -381,31 +365,41 @@ Examples:
 		FlagSet:   fs,
 		UsageFunc: shared.DefaultUsageFunc,
 		Exec: func(ctx context.Context, args []string) error {
-			if len(args) > 0 {
-				return shared.UsageError("metadata keywords diff does not accept positional arguments")
-			}
-			result, err := executeMetadataKeywordsPlan(ctx, metadataKeywordsPlanOptions{
+			return runMetadataKeywordsPlanLikeCommand(ctx, args, "metadata keywords diff", metadataKeywordsPlanOptions{
 				AppID:    *appID,
 				Version:  *version,
 				Platform: *platform,
 				Dir:      *dir,
 				DryRun:   true,
-			})
-			if err != nil {
-				if errors.Is(err, flag.ErrHelp) {
-					return err
-				}
-				return fmt.Errorf("metadata keywords diff: %w", err)
-			}
-			return shared.PrintOutputWithRenderers(
-				result,
-				*output.Output,
-				*output.Pretty,
-				func() error { return printMetadataKeywordsPlanTable(result) },
-				func() error { return printMetadataKeywordsPlanMarkdown(result) },
-			)
+			}, output)
 		},
 	}
+}
+
+func runMetadataKeywordsPlanLikeCommand(
+	ctx context.Context,
+	args []string,
+	errorPrefix string,
+	opts metadataKeywordsPlanOptions,
+	output shared.OutputFlags,
+) error {
+	if len(args) > 0 {
+		return shared.UsageError(fmt.Sprintf("%s does not accept positional arguments", errorPrefix))
+	}
+	result, err := executeMetadataKeywordsPlan(ctx, opts)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
+		return fmt.Errorf("%s: %w", errorPrefix, err)
+	}
+	return shared.PrintOutputWithRenderers(
+		result,
+		*output.Output,
+		*output.Pretty,
+		func() error { return printMetadataKeywordsPlanTable(result) },
+		func() error { return printMetadataKeywordsPlanMarkdown(result) },
+	)
 }
 
 // MetadataKeywordsLocalizeCommand returns the keywords localize subcommand.
