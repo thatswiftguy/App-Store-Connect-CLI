@@ -336,3 +336,243 @@ func TestClientListActorsParsesIncludedNames(t *testing.T) {
 		t.Fatalf("unexpected actor name: %#v", actors[0])
 	}
 }
+
+func TestClientLookupAPIKeyRolesReturnsIndividualMatchFromKey(t *testing.T) {
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case strings.Contains(r.URL.Path, "/iris/v1/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"data":[],"included":[]}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/iris/v2/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"data":[
+							{
+								"id":"ind-1",
+								"attributes":{
+									"roles":["ADMIN"],
+									"nickname":"individual-key",
+									"isActive":true,
+									"keyType":"PUBLIC_API"
+								},
+								"relationships":{
+									"createdByActor":{"data":{"id":"actor-1"}},
+									"revokedByActor":{"data":null}
+								}
+							}
+						]
+					}`)),
+				}, nil
+			default:
+				t.Fatalf("unexpected request URL %q", r.URL.String())
+				return nil, nil
+			}
+		})},
+	}
+
+	got, err := client.LookupAPIKeyRoles(context.Background(), "ind-1")
+	if err != nil {
+		t.Fatalf("LookupAPIKeyRoles() error: %v", err)
+	}
+	if got.Kind != "individual" || got.RoleSource != "key" {
+		t.Fatalf("unexpected lookup metadata: %#v", got)
+	}
+	if len(got.Roles) != 1 || got.Roles[0] != "ADMIN" {
+		t.Fatalf("unexpected roles: %#v", got.Roles)
+	}
+	if got.GeneratedBy == nil || got.GeneratedBy.ID != "actor-1" {
+		t.Fatalf("unexpected generatedBy: %#v", got.GeneratedBy)
+	}
+}
+
+func TestClientLookupAPIKeyRolesFallsBackToActorRoles(t *testing.T) {
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case strings.Contains(r.URL.Path, "/iris/v1/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"data":[],"included":[]}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/iris/v2/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"data":[
+							{
+								"id":"ind-2",
+								"attributes":{
+									"roles":[],
+									"nickname":"individual-key",
+									"isActive":true,
+									"keyType":"PUBLIC_API"
+								},
+								"relationships":{
+									"createdByActor":{"data":{"id":"actor-1"}},
+									"revokedByActor":{"data":{"id":"actor-2"}}
+								}
+							}
+						]
+					}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/olympus/v1/actors/actor-1"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"data":{
+							"id":"actor-1",
+							"attributes":{"roles":["ADMIN","CIPS"]},
+							"relationships":{
+								"provider":{"data":{"id":"prov-1"}},
+								"person":{"data":{"id":"person-1"}}
+							}
+						},
+						"included":[
+							{"type":"people","id":"person-1","attributes":{"firstName":"Mithilesh","lastName":"Chellappan"}},
+							{"type":"providers","id":"prov-1","attributes":{"name":"Ignored Provider"}}
+						]
+					}`)),
+				}, nil
+			default:
+				t.Fatalf("unexpected request URL %q", r.URL.String())
+				return nil, nil
+			}
+		})},
+	}
+
+	got, err := client.LookupAPIKeyRoles(context.Background(), "ind-2")
+	if err != nil {
+		t.Fatalf("LookupAPIKeyRoles() error: %v", err)
+	}
+	if got.RoleSource != "actor" {
+		t.Fatalf("expected actor role source, got %#v", got)
+	}
+	if len(got.Roles) != 2 || got.Roles[0] != "ADMIN" {
+		t.Fatalf("unexpected actor roles: %#v", got.Roles)
+	}
+	if got.GeneratedBy == nil || got.GeneratedBy.Name != "Mithilesh Chellappan" {
+		t.Fatalf("unexpected generatedBy: %#v", got.GeneratedBy)
+	}
+}
+
+func TestClientLookupAPIKeyRolesFallsBackToActorList(t *testing.T) {
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case strings.Contains(r.URL.Path, "/iris/v1/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"data":[],"included":[]}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/iris/v2/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"data":[
+							{
+								"id":"ind-3",
+								"attributes":{"roles":[],"nickname":"individual-key","isActive":true,"keyType":"PUBLIC_API"},
+								"relationships":{"createdByActor":{"data":{"id":"actor-1"}},"revokedByActor":{"data":null}}
+							}
+						]
+					}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/olympus/v1/actors/actor-1"):
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[]}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/olympus/v1/actors"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"data":[
+							{
+								"id":"actor-1",
+								"attributes":{"roles":["LEGAL","ADMIN"]},
+								"relationships":{"provider":{"data":{"id":"prov-1"}},"person":{"data":{"id":"person-1"}}}
+							}
+						],
+						"included":[
+							{"type":"people","id":"person-1","attributes":{"firstName":"Mithilesh","lastName":"Chellappan"}},
+							{"type":"providers","id":"prov-1","attributes":{"name":"Ignored Provider"}}
+						]
+					}`)),
+				}, nil
+			default:
+				t.Fatalf("unexpected request URL %q", r.URL.String())
+				return nil, nil
+			}
+		})},
+	}
+
+	got, err := client.LookupAPIKeyRoles(context.Background(), "ind-3")
+	if err != nil {
+		t.Fatalf("LookupAPIKeyRoles() error: %v", err)
+	}
+	if got.RoleSource != "actor" || len(got.Roles) != 2 || got.Roles[0] != "LEGAL" {
+		t.Fatalf("unexpected fallback result: %#v", got)
+	}
+}
+
+func TestClientLookupAPIKeyRolesFailsWhenIndividualRolesCannotBeResolved(t *testing.T) {
+	client := &Client{
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			switch {
+			case strings.Contains(r.URL.Path, "/iris/v1/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"data":[],"included":[]}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/iris/v2/apiKeys"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{
+						"data":[
+							{
+								"id":"ind-4",
+								"attributes":{"roles":[],"nickname":"individual-key","isActive":true,"keyType":"PUBLIC_API"},
+								"relationships":{"createdByActor":{"data":{"id":"actor-missing"}},"revokedByActor":{"data":null}}
+							}
+						]
+					}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/olympus/v1/actors/actor-missing"):
+				return &http.Response{
+					StatusCode: http.StatusNotFound,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"errors":[]}`)),
+				}, nil
+			case strings.Contains(r.URL.Path, "/olympus/v1/actors"):
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"data":[],"included":[]}`)),
+				}, nil
+			default:
+				t.Fatalf("unexpected request URL %q", r.URL.String())
+				return nil, nil
+			}
+		})},
+	}
+
+	_, err := client.LookupAPIKeyRoles(context.Background(), "ind-4")
+	if !errors.Is(err, ErrAPIKeyRolesUnresolved) {
+		t.Fatalf("expected ErrAPIKeyRolesUnresolved, got %v", err)
+	}
+}

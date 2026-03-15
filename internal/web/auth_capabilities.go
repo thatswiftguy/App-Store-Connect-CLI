@@ -402,5 +402,98 @@ func (c *Client) LookupAPIKeyRoles(ctx context.Context, keyID string) (*APIKeyRo
 			RevokedBy:   item.RevokedBy,
 		}, nil
 	}
+
+	individualKeys, err := c.listIndividualKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range individualKeys {
+		if item.KeyID != keyID {
+			continue
+		}
+		result := &APIKeyRoleLookup{
+			KeyID:      item.KeyID,
+			Name:       item.Name,
+			Kind:       "individual",
+			Roles:      append([]string(nil), item.Roles...),
+			Active:     item.Active,
+			KeyType:    item.KeyType,
+			LastUsed:   item.LastUsed,
+			Lookup:     "individual_keys",
+			RoleSource: "key",
+		}
+		if item.CreatedByActorID != "" {
+			result.GeneratedBy = &keyActor{ID: item.CreatedByActorID}
+		}
+		if item.RevokedByActorID != "" {
+			result.RevokedBy = &keyActor{ID: item.RevokedByActorID}
+		}
+		if len(result.Roles) > 0 {
+			return result, nil
+		}
+
+		actor, actors, err := c.resolveActor(ctx, item.CreatedByActorID)
+		if err != nil {
+			return nil, err
+		}
+		if actor == nil || len(actor.Roles) == 0 {
+			return nil, fmt.Errorf("%w: %s", ErrAPIKeyRolesUnresolved, keyID)
+		}
+		result.Roles = append([]string(nil), actor.Roles...)
+		result.RoleSource = "actor"
+		result.GeneratedBy = &keyActor{ID: actor.ID, Name: actor.Name}
+		if result.RevokedBy != nil {
+			if revoked, ok := actors[result.RevokedBy.ID]; ok {
+				result.RevokedBy.Name = revoked.Name
+			}
+		}
+		return result, nil
+	}
+
 	return nil, fmt.Errorf("%w: %s", ErrAPIKeyNotFound, keyID)
+}
+
+func shouldFallbackToActorList(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.Status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusMethodNotAllowed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) resolveActor(ctx context.Context, actorID string) (*olympusActor, map[string]olympusActor, error) {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return nil, nil, nil
+	}
+
+	actor, err := c.getActor(ctx, actorID)
+	if err == nil {
+		actors := map[string]olympusActor{
+			actor.ID: *actor,
+		}
+		return actor, actors, nil
+	}
+	if !shouldFallbackToActorList(err) {
+		return nil, nil, err
+	}
+
+	actors, listErr := c.listActors(ctx)
+	if listErr != nil {
+		return nil, nil, listErr
+	}
+	byID := make(map[string]olympusActor, len(actors))
+	for _, item := range actors {
+		byID[item.ID] = item
+	}
+	match, ok := byID[actorID]
+	if !ok {
+		return nil, byID, nil
+	}
+	return &match, byID, nil
 }
