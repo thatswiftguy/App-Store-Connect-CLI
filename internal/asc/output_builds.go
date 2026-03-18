@@ -40,7 +40,7 @@ type BuildUploadDeleteResult struct {
 
 // BuildsCountResult represents the output of the builds count command.
 type BuildsCountResult struct {
-	AppID string `json:"appID"`
+	AppID string `json:"appId"`
 	Total int    `json:"total"`
 }
 

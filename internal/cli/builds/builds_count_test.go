@@ -9,6 +9,9 @@ import (
 )
 
 func TestBuildsCountCommand_MissingApp(t *testing.T) {
+	isolateBuildsAuthEnv(t)
+	t.Setenv("ASC_APP_ID", "")
+
 	cmd := BuildsCountCommand()
 
 	if err := cmd.FlagSet.Parse([]string{}); err != nil {
@@ -22,6 +25,8 @@ func TestBuildsCountCommand_MissingApp(t *testing.T) {
 }
 
 func TestBuildsCountCommand_InvalidProcessingState(t *testing.T) {
+	isolateBuildsAuthEnv(t)
+
 	cmd := BuildsCountCommand()
 
 	if err := cmd.FlagSet.Parse([]string{"--app", "123456789", "--processing-state", "INVALID_STATE"}); err != nil {
@@ -41,6 +46,8 @@ func TestBuildsCountCommand_InvalidProcessingState(t *testing.T) {
 }
 
 func TestBuildsCountCommand_InvalidPlatform(t *testing.T) {
+	isolateBuildsAuthEnv(t)
+
 	cmd := BuildsCountCommand()
 
 	if err := cmd.FlagSet.Parse([]string{"--app", "123456789", "--platform", "NOT_A_PLATFORM"}); err != nil {
@@ -50,6 +57,22 @@ func TestBuildsCountCommand_InvalidPlatform(t *testing.T) {
 	err := cmd.Exec(context.Background(), []string{})
 	if err == nil {
 		t.Fatal("expected error for invalid --platform, got nil")
+	}
+}
+
+func TestBuildsCountCommand_UsesAppIDEnv(t *testing.T) {
+	isolateBuildsAuthEnv(t)
+	t.Setenv("ASC_APP_ID", "env-app-id")
+
+	cmd := BuildsCountCommand()
+
+	if err := cmd.FlagSet.Parse([]string{}); err != nil {
+		t.Fatalf("failed to parse flags: %v", err)
+	}
+
+	err := cmd.Exec(context.Background(), []string{})
+	if errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("expected ASC_APP_ID env fallback, got %v", err)
 	}
 }
 
