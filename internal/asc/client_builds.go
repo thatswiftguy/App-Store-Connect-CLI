@@ -350,6 +350,28 @@ const (
 	BuildBetaGroupsNotificationActionAutoNotifyEnabled BuildBetaGroupsNotificationAction = "auto_notify_enabled"
 )
 
+// BuildBetaGroupsPartialError reports that the beta-group assignment succeeded,
+// but a follow-up notification step failed.
+type BuildBetaGroupsPartialError struct {
+	BuildID string
+	Step    string
+	Err     error
+}
+
+func (e *BuildBetaGroupsPartialError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("beta groups were added to build %q, but %s failed: %v", e.BuildID, e.Step, e.Err)
+}
+
+func (e *BuildBetaGroupsPartialError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // AddBetaGroupsToBuildWithNotify adds beta groups to a build with optional notifications.
 func (c *Client) AddBetaGroupsToBuildWithNotify(ctx context.Context, buildID string, groupIDs []string, notify bool) (BuildBetaGroupsNotificationAction, error) {
 	buildID = strings.TrimSpace(buildID)
@@ -402,7 +424,11 @@ func (c *Client) AddBetaGroupsToBuildWithNotify(ctx context.Context, buildID str
 }
 
 func buildBetaGroupsNotifyPartialError(buildID, step string, err error) error {
-	return fmt.Errorf("beta groups were added to build %q, but %s failed: %w", buildID, step, err)
+	return &BuildBetaGroupsPartialError{
+		BuildID: buildID,
+		Step:    step,
+		Err:     err,
+	}
 }
 
 func isAutoNotifyAlreadyEnabledNotificationError(err error) bool {

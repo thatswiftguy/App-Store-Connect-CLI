@@ -2,6 +2,7 @@ package publish
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -237,7 +238,7 @@ Examples:
 				Notify:                    *notify,
 			})
 			if err != nil {
-				return fmt.Errorf("publish testflight: failed to add groups: %w", err)
+				return wrapPublishTestFlightAddGroupsError(err)
 			}
 
 			var notified *bool
@@ -513,6 +514,14 @@ func validateIPAPath(ipaPath string) (os.FileInfo, error) {
 		return nil, fmt.Errorf("--ipa must be a file")
 	}
 	return fileInfo, nil
+}
+
+func wrapPublishTestFlightAddGroupsError(err error) error {
+	var partialErr *asc.BuildBetaGroupsPartialError
+	if errors.As(err, &partialErr) {
+		return fmt.Errorf("publish testflight: %w", err)
+	}
+	return fmt.Errorf("publish testflight: failed to add groups: %w", err)
 }
 
 func resolveBundleInfoForIPA(ipaPath, version, buildNumber string) (string, string, error) {

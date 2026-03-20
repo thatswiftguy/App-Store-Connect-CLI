@@ -836,6 +836,115 @@ func TestPublishTestflightExistingBuildIDNotifyTreatsAutoNotifyConflictAsAlready
 	}
 }
 
+func TestPublishTestflightExistingBuildIDNotifyPreservesPartialSuccessMessageWhenNotificationFails(t *testing.T) {
+	setupAuth(t)
+	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
+	t.Setenv("ASC_APP_ID", "")
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	requestCount := 0
+	http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requestCount++
+		switch requestCount {
+		case 1:
+			if req.Method != http.MethodGet || req.URL.Path != "/v1/apps/app-1/betaGroups" {
+				t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL.String())
+			}
+			body := `{"data":[{"type":"betaGroups","id":"group-internal","attributes":{"name":"Internal","isInternalGroup":true,"hasAccessToAllBuilds":true}}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 2:
+			if req.Method != http.MethodGet || req.URL.Path != "/v1/builds/build-1" {
+				t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL.String())
+			}
+			body := `{"data":{"type":"builds","id":"build-1","attributes":{"version":"42","processingState":"VALID"}}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 3:
+			if req.Method != http.MethodPost || req.URL.Path != "/v1/builds/build-1/relationships/betaGroups" {
+				t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL.String())
+			}
+			return &http.Response{
+				StatusCode: http.StatusNoContent,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 4:
+			if req.Method != http.MethodGet || req.URL.Path != "/v1/builds/build-1/buildBetaDetail" {
+				t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL.String())
+			}
+			body := `{"data":{"type":"buildBetaDetails","id":"detail-1","attributes":{"autoNotifyEnabled":false}}}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		case 5:
+			if req.Method != http.MethodPost || req.URL.Path != "/v1/buildBetaNotifications" {
+				t.Fatalf("unexpected request %d: %s %s", requestCount, req.Method, req.URL.String())
+			}
+			body := `{"errors":[{"code":"INTERNAL_ERROR","title":"Service unavailable","detail":"email delivery temporarily unavailable"}]}`
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		default:
+			t.Fatalf("unexpected request count %d", requestCount)
+			return nil, nil
+		}
+	})
+
+	root := RootCommand("1.2.3")
+	root.FlagSet.SetOutput(io.Discard)
+
+	var runErr error
+	stdout, stderr := captureOutput(t, func() {
+		if err := root.Parse([]string{
+			"publish", "testflight",
+			"--app", "app-1",
+			"--build", "build-1",
+			"--group", "group-internal",
+			"--notify",
+		}); err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		runErr = root.Run(context.Background())
+	})
+
+	if runErr == nil {
+		t.Fatal("expected error")
+	}
+	if stdout != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout)
+	}
+	if stderr != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr)
+	}
+	if !strings.Contains(runErr.Error(), `publish testflight: beta groups were added to build "build-1", but notifying testers failed`) {
+		t.Fatalf("expected partial-success publish error, got %v", runErr)
+	}
+	if strings.Contains(runErr.Error(), "failed to add groups") {
+		t.Fatalf("did not expect misleading add-groups wrapper, got %v", runErr)
+	}
+	if !strings.Contains(runErr.Error(), "Service unavailable: email delivery temporarily unavailable") {
+		t.Fatalf("expected underlying notification error, got %v", runErr)
+	}
+	if requestCount != 5 {
+		t.Fatalf("expected 5 requests, got %d", requestCount)
+	}
+}
+
 func TestPublishTestflightExistingBuildNumberResolvesAndWaits(t *testing.T) {
 	setupAuth(t)
 	t.Setenv("ASC_CONFIG_PATH", filepath.Join(t.TempDir(), "nonexistent.json"))
