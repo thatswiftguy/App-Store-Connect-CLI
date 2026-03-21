@@ -145,7 +145,11 @@ Examples:
 			preparationCancel()
 
 			requestCtx, cancel := shared.ContextWithTimeout(ctx)
-			defer cancel()
+			defer func() {
+				if cancel != nil {
+					cancel()
+				}
+			}()
 
 			var createdSubmissionID string
 			submissionIDToSubmit := strings.TrimSpace(preparedSubmission.reuseSubmissionID)
@@ -431,7 +435,11 @@ Examples:
 			}
 
 			requestCtx, cancel := shared.ContextWithTimeout(ctx)
-			defer cancel()
+			defer func() {
+				if cancel != nil {
+					cancel()
+				}
+			}()
 
 			resolvedVersionID := strings.TrimSpace(*versionID)
 			result := &asc.AppStoreVersionSubmissionStatusResult{}
@@ -795,7 +803,18 @@ Examples:
 			}
 
 			requestCtx, cancel := shared.ContextWithTimeout(ctx)
-			defer cancel()
+			defer func() {
+				if cancel != nil {
+					cancel()
+				}
+			}()
+
+			refreshRequestCtx := func() {
+				if cancel != nil {
+					cancel()
+				}
+				requestCtx, cancel = shared.ContextWithTimeout(ctx)
+			}
 
 			resolvedSubmissionID := strings.TrimSpace(*submissionID)
 			if resolvedSubmissionID != "" {
@@ -876,6 +895,9 @@ Examples:
 				}
 
 				// Fall back to legacy version submission lookup.
+				if requestCtx.Err() != nil {
+					refreshRequestCtx()
+				}
 				submissionResp, err := client.GetAppStoreVersionSubmissionForVersion(requestCtx, resolvedVersionID)
 				if err != nil {
 					if asc.IsNotFound(err) {
@@ -1249,7 +1271,9 @@ func prepareReviewSubmissionForCreate(
 					}
 					result.reuseSubmissionID = reuseSubmission
 					result.reuseSubmissionHasVersion = reuseHasVersion
-					result.canceledSubmissionIDs = nil
+					if len(result.canceledSubmissionIDs) == 0 {
+						result.canceledSubmissionIDs = nil
+					}
 					return result
 				}
 				if reuseErr != nil {

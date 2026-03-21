@@ -1289,6 +1289,79 @@ func TestSubmitCancelCommand_ByVersionIDModernLookupErrorFallsBackToLegacy(t *te
 	}
 }
 
+func TestSubmitCancelCommand_ByVersionIDModernLookupTimeoutRefreshesLegacyFallbackContext(t *testing.T) {
+	setupSubmitAuth(t)
+	t.Setenv("ASC_TIMEOUT", "40ms")
+
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() {
+		http.DefaultTransport = originalTransport
+	})
+
+	requests := make([]string, 0, 5)
+	http.DefaultTransport = submitRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.Method+" "+req.URL.RequestURI())
+
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/appStoreVersions/version-123":
+			if got := req.URL.Query().Get("include"); got != "app" {
+				return nil, fmt.Errorf("expected include=app, got %q", got)
+			}
+			return submitJSONResponse(http.StatusOK, `{
+				"data": {
+					"type": "appStoreVersions",
+					"id": "version-123",
+					"attributes": {"platform": "IOS", "versionString": "1.0"},
+					"relationships": {"app": {"data": {"type": "apps", "id": "app-1"}}}
+				}
+			}`)
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/apps/app-1/reviewSubmissions":
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/appStoreVersions/version-123/appStoreVersionSubmission":
+			return submitJSONResponse(http.StatusOK, `{"data":{"type":"appStoreVersionSubmissions","id":"legacy-submission-123"}}`)
+		case req.Method == http.MethodPatch && req.URL.Path == "/v1/reviewSubmissions/legacy-submission-123":
+			return submitJSONResponse(http.StatusNotFound, `{"errors":[{"status":"404","code":"NOT_FOUND","title":"Not Found"}]}`)
+		case req.Method == http.MethodDelete && req.URL.Path == "/v1/appStoreVersionSubmissions/legacy-submission-123":
+			return submitJSONResponse(http.StatusNoContent, "")
+		}
+
+		return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.RequestURI())
+	})
+
+	cmd := SubmitCancelCommand()
+	cmd.FlagSet.SetOutput(io.Discard)
+	if err := cmd.FlagSet.Parse([]string{"--version-id", "version-123", "--confirm", "--output", "json"}); err != nil {
+		t.Fatalf("failed to parse flags: %v", err)
+	}
+
+	stdout, err := captureSubmitCommandOutput(t, func() error {
+		return cmd.Exec(context.Background(), nil)
+	})
+	if err != nil {
+		t.Fatalf("expected legacy fallback success after timeout refresh, got %v", err)
+	}
+
+	var result asc.AppStoreVersionSubmissionCancelResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("json.Unmarshal() error: %v\nstdout=%s", err, stdout)
+	}
+	if result.ID != "legacy-submission-123" || !result.Cancelled {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+
+	wantRequests := []string{
+		"GET /v1/appStoreVersions/version-123?include=app",
+		"GET /v1/apps/app-1/reviewSubmissions?include=appStoreVersionForReview&limit=200",
+		"GET /v1/appStoreVersions/version-123/appStoreVersionSubmission",
+		"PATCH /v1/reviewSubmissions/legacy-submission-123",
+		"DELETE /v1/appStoreVersionSubmissions/legacy-submission-123",
+	}
+	if !reflect.DeepEqual(requests, wantRequests) {
+		t.Fatalf("unexpected requests: got %v want %v", requests, wantRequests)
+	}
+}
+
 func TestSubmitCancelCommand_ByVersionIDTreatsCancelingModernSubmissionAsSuccess(t *testing.T) {
 	setupSubmitAuth(t)
 
@@ -2541,6 +2614,89 @@ func TestPrepareReviewSubmissionForCreateTreatsEmptyItemsAsMissingVersion(t *tes
 	}
 	if !strings.Contains(stderr, "Reusing existing review submission empty-items-submission") {
 		t.Fatalf("expected reuse message for empty-items submission, got %q", stderr)
+	}
+}
+
+func TestPrepareReviewSubmissionForCreatePreservesCanceledIDsWhenReusingAfterConflict(t *testing.T) {
+	requests := make([]string, 0, 6)
+	client := newSubmitTestClient(t, submitRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.Method+" "+req.URL.RequestURI())
+
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/apps/app-1/reviewSubmissions":
+			return submitJSONResponse(http.StatusOK, `{
+				"data": [
+					{
+						"type": "reviewSubmissions",
+						"id": "stale-sub-1",
+						"attributes": {"state": "READY_FOR_REVIEW", "platform": "IOS"}
+					},
+					{
+						"type": "reviewSubmissions",
+						"id": "reusable-empty-sub",
+						"attributes": {"state": "READY_FOR_REVIEW", "platform": "IOS"}
+					}
+				]
+			}`)
+		case req.Method == http.MethodPatch && req.URL.Path == "/v1/reviewSubmissions/stale-sub-1":
+			return submitJSONResponse(http.StatusOK, `{"data":{"type":"reviewSubmissions","id":"stale-sub-1"}}`)
+		case req.Method == http.MethodPatch && req.URL.Path == "/v1/reviewSubmissions/reusable-empty-sub":
+			return submitJSONResponse(http.StatusConflict, `{
+				"errors": [{
+					"status": "409",
+					"code": "CONFLICT",
+					"title": "Resource state is invalid.",
+					"detail": "Resource is not in cancellable state"
+				}]
+			}`)
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/reviewSubmissions/reusable-empty-sub":
+			return submitJSONResponse(http.StatusOK, `{
+				"data": {
+					"type": "reviewSubmissions",
+					"id": "reusable-empty-sub",
+					"attributes": {"state": "READY_FOR_REVIEW", "platform": "IOS"},
+					"relationships": {
+						"appStoreVersionForReview": {
+							"data": {"type": "appStoreVersions", "id": "version-1"}
+						}
+					}
+				}
+			}`)
+		case req.Method == http.MethodGet && req.URL.Path == "/v1/reviewSubmissions/reusable-empty-sub/items":
+			return submitJSONResponse(http.StatusOK, `{"data":[],"links":{}}`)
+		default:
+			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.RequestURI())
+		}
+	}))
+
+	stderr := captureSubmitStderr(t, func() {
+		got := prepareReviewSubmissionForCreate(context.Background(), client, "app-1", "IOS", "version-1")
+		if got.reuseSubmissionID != "reusable-empty-sub" {
+			t.Fatalf("expected reusable submission after cancel conflict, got %#v", got)
+		}
+		if got.reuseSubmissionHasVersion {
+			t.Fatalf("expected empty reusable submission to require re-adding the version, got %#v", got)
+		}
+		if _, ok := got.canceledSubmissionIDs["stale-sub-1"]; !ok {
+			t.Fatalf("expected earlier canceled submission ID to be preserved, got %#v", got.canceledSubmissionIDs)
+		}
+	})
+
+	wantRequests := []string{
+		"GET /v1/apps/app-1/reviewSubmissions?filter%5Bplatform%5D=IOS&filter%5Bstate%5D=READY_FOR_REVIEW&include=appStoreVersionForReview&limit=200",
+		"PATCH /v1/reviewSubmissions/stale-sub-1",
+		"PATCH /v1/reviewSubmissions/reusable-empty-sub",
+		"GET /v1/reviewSubmissions/reusable-empty-sub",
+		"GET /v1/reviewSubmissions/reusable-empty-sub/items?limit=200",
+	}
+	if !reflect.DeepEqual(requests, wantRequests) {
+		t.Fatalf("unexpected requests: got %v want %v", requests, wantRequests)
+	}
+	if !strings.Contains(stderr, "Canceled stale review submission stale-sub-1") {
+		t.Fatalf("expected stale submission cancellation message, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Reusing existing empty review submission reusable-empty-sub") {
+		t.Fatalf("expected empty reusable submission message, got %q", stderr)
 	}
 }
 

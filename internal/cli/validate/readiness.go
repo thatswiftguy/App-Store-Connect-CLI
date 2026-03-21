@@ -31,7 +31,18 @@ func BuildReadinessReport(ctx context.Context, opts ReadinessOptions) (validatio
 	}
 
 	requestCtx, cancel := shared.ContextWithTimeout(ctx)
-	defer cancel()
+	defer func() {
+		if cancel != nil {
+			cancel()
+		}
+	}()
+
+	refreshRequestCtx := func() {
+		if cancel != nil {
+			cancel()
+		}
+		requestCtx, cancel = shared.ContextWithTimeout(ctx)
+	}
 
 	resolvedVersionID := strings.TrimSpace(opts.VersionID)
 	if resolvedVersionID == "" {
@@ -145,6 +156,9 @@ func BuildReadinessReport(ctx context.Context, opts ReadinessOptions) (validatio
 			// Leave priceScheduleID empty so validation reports a missing schedule.
 		} else if reason, ok := readinessPricingSkipReason(err); ok {
 			pricingFetchSkipReason = reason
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				refreshRequestCtx()
+			}
 		} else {
 			return validation.Report{}, fmt.Errorf("failed to fetch app price schedule: %w", err)
 		}
@@ -156,7 +170,7 @@ func BuildReadinessReport(ctx context.Context, opts ReadinessOptions) (validatio
 	availableTerritories := 0
 	availabilityFetchSkipReason := ""
 	pricingCoverageSkipReason := ""
-	availabilityID, availableTerritories, err = fetchAvailableTerritories(requestCtx, client, opts.AppID)
+	availabilityID, availableTerritories, err = fetchAvailableTerritoriesFn(requestCtx, client, opts.AppID)
 	if err != nil {
 		if reason, ok := readinessAvailabilitySkipReason(err); ok {
 			availabilityFetchSkipReason = reason
@@ -164,6 +178,9 @@ func BuildReadinessReport(ctx context.Context, opts ReadinessOptions) (validatio
 			availableTerritories = 0
 			if coverageReason, coverageOK := availabilityCheckSkipReason(err); coverageOK {
 				pricingCoverageSkipReason = coverageReason
+			}
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				refreshRequestCtx()
 			}
 		} else {
 			return validation.Report{}, err
@@ -198,7 +215,7 @@ func BuildReadinessReport(ctx context.Context, opts ReadinessOptions) (validatio
 		})
 	}
 
-	screenshotSets, err := fetchScreenshotSets(requestCtx, client, versionLocsResp.Data)
+	screenshotSets, err := fetchScreenshotSetsFn(requestCtx, client, versionLocsResp.Data)
 	if err != nil {
 		return validation.Report{}, err
 	}
