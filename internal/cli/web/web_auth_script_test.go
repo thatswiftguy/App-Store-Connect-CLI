@@ -90,3 +90,14 @@ func TestAppleTwoFactorScriptDoesNotTreatTrustedDevicesPromptAsTrustDialog(t *te
 		t.Fatalf("expected code-entry dialog hints for ordinary 2FA challenge text")
 	}
 }
+
+func TestAppleTwoFactorScriptExtractsStandaloneSixDigitCodes(t *testing.T) {
+	script := loadAppleTwoFactorScript(t)
+
+	if strings.Contains(script, "/usr/bin/tr -cd '0-9' | /usr/bin/grep -Eo '[0-9]{6}'") {
+		t.Fatalf("expected script to avoid collapsing unrelated digits before matching 2FA codes")
+	}
+	if !strings.Contains(script, "/usr/bin/grep -Eo '(^|[^0-9])[0-9]{6}([^0-9]|$)'") {
+		t.Fatalf("expected standalone 6-digit extraction pattern in script")
+	}
+}

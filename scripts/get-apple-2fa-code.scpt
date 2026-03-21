@@ -287,7 +287,7 @@ end normalizeText
 on extractFirstCode(sourceText)
 	set sourceText to sourceText as text
 	try
-		return do shell script "/bin/echo " & quoted form of sourceText & " | /usr/bin/tr -cd '0-9' | /usr/bin/grep -Eo '[0-9]{6}' | /usr/bin/head -n1"
+		return do shell script "/bin/echo " & quoted form of sourceText & " | /usr/bin/grep -Eo '(^|[^0-9])[0-9]{6}([^0-9]|$)' | /usr/bin/head -n1 | /usr/bin/tr -cd '0-9'"
 	on error
 		return ""
 	end try
