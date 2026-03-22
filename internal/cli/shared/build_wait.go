@@ -17,10 +17,6 @@ import (
 // PublishDefaultPollInterval is the default polling interval for build discovery.
 const PublishDefaultPollInterval = 30 * time.Second
 
-// BuildUploadPostCommitVerifyDefaultTimeout is the default amount of time the
-// CLI watches a freshly committed upload for immediate processing failures.
-const BuildUploadPostCommitVerifyDefaultTimeout = 30 * time.Second
-
 type buildUploadFailureDiagnosticsFunc func(context.Context, *asc.Client, string, *asc.BuildUploadResponse) (string, error)
 
 var (

@@ -2326,6 +2326,53 @@ func TestAddVersionToSubmissionOrRecover_ExhaustsRetriesForRecentlyCanceledSubmi
 	}
 }
 
+func TestAddVersionToSubmissionOrRecover_RetriesStillInProgressConflictForRecentlyCanceledSubmission(t *testing.T) {
+	const staleSubmissionID = "stale-1"
+
+	attempts := 0
+	client := newSubmitTestClient(t, submitRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != "/v1/reviewSubmissionItems" {
+			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+		}
+		attempts++
+		if attempts < 3 {
+			return submitJSONResponse(http.StatusConflict, submitStillInProgressConflictBody(staleSubmissionID))
+		}
+		return submitJSONResponse(http.StatusCreated, `{
+			"data": {
+				"type": "reviewSubmissionItems",
+				"id": "item-123",
+				"attributes": {
+					"state": "READY_FOR_REVIEW"
+				}
+			}
+		}`)
+	}))
+
+	originalDelays := submitCreateRecentlyCanceledRetryDelays
+	submitCreateRecentlyCanceledRetryDelays = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	t.Cleanup(func() {
+		submitCreateRecentlyCanceledRetryDelays = originalDelays
+	})
+
+	resolvedID, err := addVersionToSubmissionOrRecover(
+		context.Background(),
+		client,
+		"new-sub-1",
+		"version-1",
+		map[string]struct{}{staleSubmissionID: {}},
+	)
+	if err != nil {
+		t.Fatalf("expected retry recovery, got %v", err)
+	}
+	if resolvedID != "new-sub-1" {
+		t.Fatalf("expected new submission ID after retry recovery, got %q", resolvedID)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 add-item attempts (2 conflicts + success), got %d", attempts)
+	}
+}
+
 func TestAddVersionToSubmissionOrRecover_ReturnsContextErrorWhileWaitingForDetach(t *testing.T) {
 	const staleSubmissionID = "stale-1"
 
@@ -2980,6 +3027,25 @@ func submitAlreadyAddedConflictBody(existingSubmissionID string) string {
 					"/v1/reviewSubmissionItems": [{
 						"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
 						"detail": "appStoreVersions with id version-1 was already added to another reviewSubmission with id %s"
+					}]
+				}
+			}
+		}]
+	}`, existingSubmissionID)
+}
+
+func submitStillInProgressConflictBody(existingSubmissionID string) string {
+	return fmt.Sprintf(`{
+		"errors": [{
+			"status": "409",
+			"code": "ENTITY_ERROR",
+			"title": "The request entity is not valid.",
+			"detail": "This resource cannot be reviewed, please check associated errors to see why.",
+			"meta": {
+				"associatedErrors": {
+					"/v1/reviewSubmissionItems": [{
+						"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+						"detail": "appStoreVersions with id version-1 is already in another reviewSubmission with id %s still in progress"
 					}]
 				}
 			}

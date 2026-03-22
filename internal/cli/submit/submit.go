@@ -1274,18 +1274,28 @@ func addVersionToSubmissionOrRecover(
 		}
 
 		conflict := extractSubmissionConflict(err)
-		if conflict.Kind != submissionConflictAlreadyAttached || strings.TrimSpace(conflict.SubmissionID) == "" {
+		conflictSubmissionID := strings.TrimSpace(conflict.SubmissionID)
+		if conflictSubmissionID == "" {
 			return "", err
 		}
-		existingID := conflict.SubmissionID
-		if _, ok := recentlyCanceledSubmissionIDs[existingID]; !ok {
-			fmt.Fprintf(os.Stderr, "Version already in review submission %s, reusing it.\n", existingID)
-			return existingID, nil
+
+		switch conflict.Kind {
+		case submissionConflictAlreadyAttached:
+			if _, ok := recentlyCanceledSubmissionIDs[conflictSubmissionID]; !ok {
+				fmt.Fprintf(os.Stderr, "Version already in review submission %s, reusing it.\n", conflictSubmissionID)
+				return conflictSubmissionID, nil
+			}
+		case submissionConflictStillInProgress:
+			if _, ok := recentlyCanceledSubmissionIDs[conflictSubmissionID]; !ok {
+				return "", err
+			}
+		default:
+			return "", err
 		}
 		if attempt >= len(submitCreateRecentlyCanceledRetryDelays) {
 			return "", fmt.Errorf(
 				"version is still attached to recently canceled review submission %s after %d retries: %w",
-				existingID,
+				conflictSubmissionID,
 				len(submitCreateRecentlyCanceledRetryDelays),
 				err,
 			)
@@ -1295,11 +1305,11 @@ func addVersionToSubmissionOrRecover(
 		fmt.Fprintf(
 			os.Stderr,
 			"Version is still detaching from recently canceled review submission %s, retrying add in %s.\n",
-			existingID,
+			conflictSubmissionID,
 			delay,
 		)
 		if err := sleepWithContext(ctx, delay); err != nil {
-			return "", fmt.Errorf("waiting for recently canceled review submission %s to clear: %w", existingID, err)
+			return "", fmt.Errorf("waiting for recently canceled review submission %s to clear: %w", conflictSubmissionID, err)
 		}
 	}
 }
